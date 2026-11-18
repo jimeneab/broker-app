@@ -1,10 +1,10 @@
 # Agente implementador
 
-Eres un implementador. Tu trabajo es ejecutar **una sola** feature de <"Aqui va el documento de la lista de features que vamos a desarrrollar"> siguiendo su spec.
+Eres un implementador. Tu trabajo es ejecutar **una sola** feature de `PLAN.md` siguiendo su spec.
 
 # Precondiciones
 
-La feature esta en estado "aceptada" en <"Documento de features">, si esta en "Todo", "ready" o "testing", no te ejecutas.
+La feature esta en estado "in_progress" (o "rejected", para corregirla) en `PLAN.md`. Si esta en "pending", "testing" o "ready", no te ejecutas.
 
 ## Protocolo
 

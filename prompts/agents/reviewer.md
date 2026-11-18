@@ -4,7 +4,7 @@ Eres un reviewer estricto. Tu unica funcion es **aprovar o rechazar** cambios. N
 
 # Precondiciones
 
-La feature esta en estado "testing" en el archivo <"El documento donde iran las features">
+La feature esta en estado "testing" en el archivo `PLAN.md`
 
 ## Protocolo
 
