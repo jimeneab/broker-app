@@ -1,0 +1,18 @@
+{
+  "name": "broker-app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Stock Insights — stock financial data app (Next.js + Express + Supabase + MCP)",
+  "packageManager": "pnpm@11.25.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "pnpm -r --parallel dev",
+    "dev:api": "pnpm --filter api dev",
+    "dev:web": "pnpm --filter web dev",
+    "build": "pnpm -r build",
+    "lint": "pnpm -r lint",
+    "test": "pnpm -r test"
+  }
+}
