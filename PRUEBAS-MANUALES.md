@@ -176,3 +176,39 @@
 7. Solo con teclado: Tab llega a las opciones, las flechas cambian la opcion, Enter avanza y el foco pasa al encabezado de cada pregunta y al de la pantalla final. El foco es visible en las opciones y los botones.
 8. A 375 px de ancho, en modo claro y oscuro: sin scroll horizontal, la opcion elegida se marca en azul y el boton principal es oscuro (claro en modo oscuro).
 9. Despliegue conjunto de F01 + F02: push solo cuando F02 este `ready`. Prueba de humo en produccion: signup → cuestionario → Home.
+
+## F03 — Busqueda y detalle de stock
+
+### Ya verificado por el implementer (local, con keys reales)
+- `pnpm test` (api 155, web 157), `pnpm lint` y `pnpm build` sin errores.
+- Con un usuario temporal (creado y borrado): `search?q=apple` incluye `AAPL:stock`; `/stocks/AAPL` → 200 con quote, profile y metrics; `history?range=6M` → 128 velas ascendentes; `/stocks/ZZZZZ` → 404 `SYMBOL_NOT_FOUND`; sin token → 401.
+- `:3000/search`, `/search?q=apple` y `/stocks/AAPL` sin sesion → 307 a `/login`.
+
+### API (con un `access_token` real, de DevTools o de `supabase.auth.getSession()`), en local y en el desplegado
+1. `CORS_ORIGIN`: en Production no hay nada que hacer (ya es `https://broker-app-web-nine.vercel.app`). Solo si quieres probar un deploy de Preview desde su propio dominio, agrega ese dominio en Preview y haz redeploy.
+2. `GET /stocks/search?q=apple` → incluye `AAPL` con `type: "stock"`, sin simbolos extranjeros (`603020.SS`, `2788.T`).
+3. `GET /stocks/search?q=spy` → solo `SPY` (sin SPY.AX, SPY.BA ni SPY.MX), con `type: "etf"`.
+4. `GET /stocks/search?q=berkshire` → incluye `BRK.A` y/o `BRK.B`.
+5. `GET /stocks/search?q=baba` → `BABA` una sola vez, con `type: "stock"`.
+6. `GET /stocks/SPY` → 200; profile o metrics pueden venir `null`.
+7. `GET /stocks/AAPL1` → 400 `VALIDATION_ERROR "Invalid symbol"`.
+8. `GET /stocks/AAPL/history?range=1M` y despues `range=1Y` → en `provider_cache` hay una sola fila `twelvedata:history:AAPL:1day:260`. `range=5Y` agrega `…:1week:270`. Las velas van en orden ascendente.
+9. En Table Editor, `provider_cache` muestra `finnhub:search:apple`, `finnhub:quote:AAPL`, `finnhub:profile:AAPL` y `finnhub:metrics:AAPL` con su `expires_at`.
+10. Repite `GET /stocks/AAPL` antes de 60 s: en el dashboard de Finnhub (o en los logs) no aparecen llamadas nuevas.
+
+### Web (en local y en la app desplegada, con sesion y onboarding hecho)
+1. En el header escribe "apple": tras una pausa breve aparecen sugerencias con AAPL y el badge "Acción". Con flechas + Enter se abre `/stocks/AAPL` y el buscador se vacia.
+2. Escribe "spy" y pulsa Enter sin elegir → `/search?q=spy`, solo con SPY marcado como "ETF". "Buscar" esta resaltado en el sidebar.
+3. Busca "berkshire" → aparece BRK.A o BRK.B y su enlace abre la ficha. Busca "baba" → BABA aparece una sola vez, como "Acción".
+4. Abre `/search` sin `q` → buscador vacio y "Busca una empresa o ETF". Busca "zzzzzz" → "Sin resultados para «zzzzzz»".
+5. En `/stocks/AAPL`:
+   - Logo, nombre, "AAPL · bolsa", precio, cambio en verde o rojo con triangulo, y "Precio al … (hora de Nueva York)".
+   - "Métricas clave" con 10 valores (capitalizacion tipo "2.95 T"); un dato faltante se ve como "—".
+   - Bloque "Empresa" con sector, pais, bolsa y sitio web, que abre en otra pestaña.
+   - Pestañas Técnico y Noticias deshabilitadas con "Próximamente".
+   - Ver codigo fuente: el HTML ya trae el precio y las metricas.
+6. Grafica: carga en 6M. Cambiar a 1M, 1A y 5A actualiza las velas y el volumen (5A con velas semanales). En DevTools > Network, volver a un rango ya visto no hace una peticion nueva y no hay errores de CORS. El logo de TradingView aparece en la esquina (lo pide la licencia).
+7. `/stocks/zzzzz` → "No encontramos el símbolo ZZZZZ" con el enlace "Buscar «ZZZZZ»". `/stocks/aapl` (minusculas) funciona. `/stocks/AAPL1` → el mismo estado vacio.
+8. Cambia el tema del sistema a oscuro con la ficha abierta: la grafica cambia de colores sin recargar.
+9. A 375 px y solo con teclado (Tab, flechas, Enter, Escape): el buscador, `/search` y la ficha son usables, el foco es visible, las metricas van en 2 columnas y no hay scroll horizontal. Repite en modo oscuro.
+10. Con el API apagado, en la ficha → alerta "No se pudo conectar con el servidor."; en la grafica, el boton "Reintentar" vuelve a pedir el historico.

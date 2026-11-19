@@ -169,3 +169,56 @@ Debajo de la explicacion siempre va: "Este perfil es orientativo y no es una rec
 - [ ] Un usuario no puede escribir su puntaje, perfil o fecha de onboarding con valores arbitrarios usando su sesion (ni con un update directo ni llamando la funcion de la base de datos con otros datos); verificado con test automatico y prueba SQL/manual.
 - [ ] El cuestionario se puede responder solo con teclado y a 375 px no hay scroll horizontal.
 - [ ] F01 y F02 se despliegan juntas y el flujo signup → cuestionario → Home funciona en la app desplegada.
+
+---
+
+## F03 — Busqueda y detalle de stock
+
+**Estatus:** ready
+
+### Proposito
+Es el corazon del reto. El usuario busca una empresa o un ETF de US por nombre o simbolo y abre su ficha: precio actual y cambio del dia, datos de la empresa, metricas clave y una grafica de velas con varios rangos. Todo con datos reales, que cargan rapido y siguen disponibles aunque los proveedores esten cerca de su limite gratuito.
+
+### Historias de usuario
+- Como usuario, quiero escribir "apple" o "AAPL" en el buscador del encabezado y ver sugerencias mientras escribo, para llegar rapido a la empresa.
+- Como usuario, quiero pulsar Enter y ver todos los resultados de mi busqueda en una pagina, para elegir con calma.
+- Como usuario, quiero ver en la ficha de un stock su precio, cuanto subio o bajo hoy (con color) y sus metricas clave, para entender la empresa de un vistazo.
+- Como usuario, quiero ver la grafica de precios en 1 mes, 6 meses, 1 año o 5 años, para ver la tendencia.
+
+### Requisitos
+1. CUANDO el usuario escribe en el buscador del encabezado, EL sistema DEBE mostrar hasta 10 sugerencias (simbolo, nombre y tipo: Acción o ETF) unos 300 ms despues de que deja de escribir, sin esperar a que pulse Enter.
+2. CUANDO el usuario elige una sugerencia (clic, o flechas y Enter), EL sistema DEBE abrir la ficha de ese stock.
+3. CUANDO el usuario pulsa Enter sin elegir una sugerencia, EL sistema DEBE abrir la pagina "Buscar" con todos los resultados de lo que escribio.
+4. CUANDO se abre "Buscar" sin texto de busqueda, EL sistema DEBE mostrar un buscador vacio con una indicacion de que escribir.
+5. CUANDO una busqueda no tiene resultados, EL sistema DEBE decirlo ("Sin resultados para «texto»") y no mostrar una lista vacia.
+6. EL buscador DEBE mostrar solo acciones comunes, ADRs y ETFs que cotizan en US, sin repetir un mismo simbolo. Los ADRs (p. ej. TSM, BABA) se muestran como "Acción". Las clases de accion con punto (BRK.A, BRK.B) si aparecen. No muestra simbolos de otras bolsas ni otros instrumentos (warrants, preferentes, etc.).
+7. CUANDO el usuario abre la ficha de un stock, EL sistema DEBE mostrar:
+   - nombre, logo (si existe) y simbolo;
+   - precio actual, cambio y cambio % del dia en verde si sube y en rojo si baja, con signo y flecha (el color nunca es la unica señal);
+   - hora del ultimo precio (hora de Nueva York);
+   - tarjetas con: apertura, cierre anterior, maximo y minimo del dia, capitalizacion de mercado, P/E, beta, maximo y minimo de 52 semanas y rendimiento de dividendo;
+   - datos de la empresa: sector, pais, bolsa y sitio web.
+   Un dato que el proveedor no da se muestra como "—".
+8. CUANDO la ficha carga, EL encabezado y las metricas DEBEN llegar ya renderizados desde el servidor; la grafica puede cargar despues.
+9. CUANDO el usuario elige un rango (1M, 6M, 1A, 5A), EL sistema DEBE actualizar la grafica de velas con su volumen. Por defecto se muestra 6M. En 5A cada vela es una semana; en los demas, un dia.
+10. CUANDO el simbolo no existe, EL sistema DEBE mostrar un estado vacio "No encontramos el símbolo X" con un enlace a "Buscar", no una pagina rota.
+11. CUANDO el proveedor de datos falla o esta en su limite, EL sistema DEBE mostrar el mensaje de error correspondiente (F00) en la parte afectada. Si solo fallan los datos de la empresa o las metricas, el precio se sigue mostrando y lo faltante aparece como "—".
+12. CUANDO el usuario esta en la ficha, EL sistema DEBE mostrar las pestañas Resumen, Técnico y Noticias. Técnico (F08) y Noticias (F05) se ven deshabilitadas con "Próximamente", igual que en la barra lateral.
+13. CUANDO F03 esta implementada, el item "Buscar" de la barra lateral DEBE estar habilitado y resaltado en la pagina "Buscar".
+14. EL formato de numeros DEBE ser el de México (es-MX): moneda en dolares (`$189.84`), porcentaje con signo (`+1.23%`) y capitalizacion abreviada (`2.95 T`, `3.4 B`, `812 M`).
+
+### Fuera de alcance (F03)
+- Precio en tiempo real (streaming). El precio se actualiza al recargar y puede tener hasta 60 s de antigüedad.
+- Mercados fuera de US, cripto y forex.
+- Boton de favorito (F04), noticias (F05), indicadores tecnicos (F08), boton "Operar" (F09) y registro de la visita (F07).
+- Comparar stocks o personalizar la grafica (indicadores, tipo de linea, zoom guardado).
+
+### Criterios de aceptacion
+- [ ] Buscar "apple" muestra AAPL (en el autocompletado y en la pagina "Buscar").
+- [ ] Buscar "spy" muestra el ETF SPY con tipo "ETF" como primer resultado y ningun simbolo de otras bolsas (SPY.AX, SPY.MX); pueden aparecer acciones de US que coincidan por nombre.
+- [ ] Buscar "berkshire" muestra BRK.A o BRK.B; buscar "baba" muestra BABA una sola vez, como "Acción".
+- [ ] El detalle de AAPL carga con precio, cambio con color y metricas; cambiar de rango actualiza la grafica.
+- [ ] Un simbolo inexistente (p. ej. `/stocks/ZZZZZ`) muestra el estado vacio con enlace a "Buscar".
+- [ ] La cache se usa: una segunda consulta del mismo dato dentro de su vigencia no llega al proveedor (test automatico).
+- [ ] Abrir la ficha no consume mas de 3 llamadas a Finnhub y 1 a Twelve Data cuando nada esta en cache; pasar entre 1M, 6M y 1A no hace llamadas nuevas a Twelve Data (test automatico).
+- [ ] El buscador se usa solo con teclado (flechas, Enter, Escape) y a 375 px la ficha y la busqueda no tienen scroll horizontal, en modo claro y oscuro.

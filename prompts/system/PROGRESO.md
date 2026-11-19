@@ -172,3 +172,58 @@
   - Aplicar la migracion y correr la verificacion SQL/PostgREST y el flujo en navegador (ver PRUEBAS-MANUALES).
   - Verificacion visual a 375 px y en modo oscuro: no hubo herramienta de captura en la sesion.
   - Despliegue conjunto de F01 + F02: no se hizo commit ni push.
+
+## F03 — Busqueda y detalle de stock (2026-11-18) → `testing`
+
+### Que se implemento
+- **API (`api/`):**
+  - `providers/finnhub.ts`: `search` manda `exchange: "US"`. Es el unico cambio a codigo de F00.
+  - `services/stockService.ts`: los schemas Zod `symbolSchema`, `rangeSchema` y `searchQuerySchema`; `searchStocks`, `getStock` y `getStockHistory` (reciben `unknown`); y las funciones puras `filterSearchResults` y `sliceRange`.
+    - La cache guarda la respuesta cruda y el filtro se aplica despues.
+    - El detalle pide las 3 llamadas en paralelo con `Promise.allSettled`; el quote decide el 404 y profile o metrics fallidos quedan en `null` con `console.error`.
+    - Una sola serie diaria (`1day:260`) sirve a 1M, 6M y 1Y; 5Y usa `1week:270`.
+    - Las velas se dejan ascendentes y sin fechas repetidas (se queda la primera) y se recortan con ancla en la ultima vela.
+  - `controllers/stocksController.ts` y 3 rutas en `routes/index.ts` (`search` antes que `:symbol`), detras de `requireAuth`.
+- **Web (`web/`):**
+  - Dependencia nueva: `lightweight-charts` 5.3.0.
+  - `lib/stocks.ts` (`normalizeSymbol`, `STOCK_RANGES`, `DEFAULT_RANGE`) y `lib/format.ts` (formatos es-MX).
+  - `lib/api.ts`: `searchStocks`, `stock`, `stockHistory`, sus schemas y tipos, y el mensaje de `SYMBOL_NOT_FOUND`.
+  - `components/stocks/`: `HeaderSearch` (cliente, combobox ARIA), `SearchResults` (Server, con `SearchForm`), `StockOverview`, `StockHeader`, `StockMetrics`, `StockTabs` (Server), `PriceChart` (cliente) y `TypeBadge`.
+  - Rutas `(app)/search/page.tsx` y `(app)/stocks/[symbol]/page.tsx` (`generateMetadata` sin llamar al API).
+  - `Header` monta `HeaderSearch` en el slot; `nav-items.ts`: "Buscar" pasa a `available: true`.
+- **Tests:**
+  - api: `services/stockService.test.ts` (nuevo); `providers/finnhub.test.ts` y `app.test.ts` actualizados.
+  - web: `lib/format.test.ts`, `lib/stocks.test.ts`, `HeaderSearch.test.tsx`, `SearchResults.test.tsx`, `StockOverview.test.tsx`, `PriceChart.test.tsx` y `stocks/[symbol]/page.test.tsx` (nuevos); `lib/api.test.ts` y `SidebarLinks.test.tsx` actualizados.
+
+### Decisiones
+- **API real de `lightweight-charts`:** se verifico en `web/node_modules/lightweight-charts/dist/typings.d.ts` (v5.3.0). `createChart`, `addSeries`, `CandlestickSeries`, `HistogramSeries`, `ColorType.Solid`, `autoSize`, `priceScale().applyOptions({ scaleMargins })` y `layout.attributionLogo` (default `true`) existen tal como los escribio la spec. No hubo diferencias.
+- **Diseño (skill impeccable, extension del sistema de F00 a F02, modo "Operate"):**
+  - Sin tokens nuevos.
+  - **Flecha del cambio:** es un triangulo SVG y no el glifo `▲`/`▼` de la spec. El craft floor de impeccable prohibe glifos unicode como iconos y F00 dibuja todos los iconos en SVG. El texto (`+2.31 (+1.23%)`), el color y el `sr-only` "Sube"/"Baja" son los de la spec.
+  - **Metricas:** cumplen el `<dl>` en grilla de 2, 3 y 4 columnas con `<dt>`/`<dd>`, pero son celdas de un solo panel con bordes internos, no tarjetas sueltas: se leen como hoja de datos y evitan el muro de tarjetas iguales que impeccable desaconseja.
+  - **Encabezados `h2`:** se agregaron "Precio", "Métricas clave" y "Empresa" para que la ficha se pueda navegar por encabezados.
+  - **Pestañas:** subrayado `accent` solo en la activa. En el selector de rango, la opcion activa usa `accent-soft`/`accent`, el mismo estilo de seleccion de F00.
+  - **Lista de sugerencias:** es un panel `surface` con sombra suave y la opcion activa en `accent-soft`. En `/search` se agrego una linea "N resultados para «q»".
+  - El detector de impeccable no reporto hallazgos. Como en F00 a F02, no hubo forma de entrevistar al dueño: la direccion se tomo del sistema existente y de la spec. No existe `PRODUCT.md`.
+- **Botones de rango sin `aria-label` largo:** el nombre accesible es el texto visible ("1A"), para cumplir WCAG 2.5.3 (label in name). El nombre largo ("1 año") va en el `aria-label` de la grafica, como pide la spec.
+- **`TypeBadge.tsx` (fuera del arbol de la spec):** el badge se comparte entre `HeaderSearch` (cliente) y `SearchResults` (Server). No podia vivir en `SearchResults.tsx`, porque ese archivo importa `next/headers`.
+- **Sin `decodeURIComponent` sobre `params.symbol`:** un `%` mal formado lanzaria una excepcion, y un simbolo valido nunca lleva escapes.
+- **`HeaderSearch`:** el reset con texto vacio ocurre en `onChange` y no dentro del efecto (regla `react-hooks/set-state-in-effect`). `SearchResults` resuelve los datos en el `try` y arma el JSX fuera (regla `react-hooks/error-boundaries`).
+- **`PriceChart`:** la carga se dispara desde los clics y desde el efecto de montaje, despues de crear la grafica. `rangeRef` recuerda el rango si el usuario cambia antes de que cargue la libreria. Al cambiar el tema se reaplican las opciones de la grafica, los colores de las velas y los datos de volumen, porque su color va en cada punto.
+- **Bundle:** en el cliente, `lightweight-charts` va en su propio chunk, cargado solo por el `import()`. Turbopack tambien emite ese chunk en `.next/server/chunks/ssr/`, pero solo lo referencia el `import()` del `useEffect`, que nunca corre en el servidor, asi que no se evalua.
+- **Fixture de `app.test.ts`:** `adminClient` ahora devuelve una cache que siempre falla (miss), en lugar de `vi.fn()`, para que las rutas de stocks lleguen al `marketData` mockeado sin ensuciar los logs.
+- La spec no tuvo errores bloqueantes.
+
+### Como quedo
+- `pnpm test`: api 11 archivos / 155 tests; web 24 archivos / 157 tests.
+- `pnpm lint` y `pnpm build` sin errores. Build: `/search` y `/stocks/[symbol]` con prerender parcial (◐).
+- Verificacion con las keys reales, contra el API local y un usuario temporal creado por signup y borrado al final con la admin API (200):
+  - `search?q=apple` → 200: AAPL, APLE, MLP, AAPI, PAPL… todos `stock`.
+  - `/stocks/AAPL` → 200 con quote, profile ("Apple Inc.") y metrics.
+  - `history?range=6M` → 200, 128 velas ascendentes del 2026-05-19 al 2026-11-18.
+  - `/stocks/ZZZZZ` → 404 `SYMBOL_NOT_FOUND`; sin token → 401.
+  - `:3000/search`, `/search?q=apple` y `/stocks/AAPL` sin sesion → 307 a `/login`.
+- Pendiente:
+  - Verificacion visual en navegador (375 px, modo oscuro, grafica): no hubo herramienta de captura en la sesion. Queda en PRUEBAS-MANUALES.
+  - Un `tsx watch` del API anterior a esta sesion (PID 19284) ocupaba el puerto 4000. Se uso para la verificacion, porque ya habia recargado el codigo nuevo. No se pudo detener: el permiso se nego porque el proceso no lo inicio el agente. El `next dev` de esta sesion si se detuvo y el puerto 3000 quedo libre.
+  - Despliegue: no se hizo commit ni push.

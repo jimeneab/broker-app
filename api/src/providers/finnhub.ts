@@ -76,7 +76,7 @@ export function createFinnhubProvider(apiKey: string): Omit<MarketDataProvider, 
 
   return {
     async search(query) {
-      const body = await get("/search", { q: query }, searchSchema);
+      const body = await get("/search", { q: query, exchange: "US" }, searchSchema);
       return body.result.map((r) => ({ symbol: r.symbol, name: r.description, type: r.type }));
     },
 

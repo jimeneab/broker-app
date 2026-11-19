@@ -11,7 +11,17 @@ const userClient = vi.fn(() => ({
   from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: profileRow, error: null }) }) }) }),
   rpc,
 }));
-vi.mock("./lib/supabase.js", () => ({ userClient, adminClient: vi.fn() }));
+// provider_cache always misses, so every request reaches the mocked marketData.
+const missingCache = {
+  from: () => ({
+    select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }) }),
+    upsert: async () => ({ error: null }),
+  }),
+};
+vi.mock("./lib/supabase.js", () => ({ userClient, adminClient: () => missingCache }));
+
+const marketData = { search: vi.fn(), quote: vi.fn(), profile: vi.fn(), metrics: vi.fn(), history: vi.fn() };
+vi.mock("./providers/index.js", () => ({ marketData }));
 
 const { app } = await import("./app.js");
 
@@ -139,5 +149,79 @@ describe("app", () => {
       expect(userClient).toHaveBeenCalledWith(token);
       expect(rpc).toHaveBeenCalledWith("submit_risk_profile", { answers: [3, 2, 3, 2, 3, 2] });
     });
+  });
+  describe("stocks", () => {
+    const quote = {
+      symbol: "AAPL",
+      price: 189.84,
+      change: 2.31,
+      changePercent: 1.23,
+      high: 190.1,
+      low: 186.9,
+      open: 187.2,
+      previousClose: 187.53,
+      timestamp: 1795545600,
+    };
+    const auth = async () => ({ Authorization: `Bearer ${await validToken()}` });
+
+    beforeEach(() => {
+      Object.values(marketData).forEach((fn) => fn.mockReset());
+      marketData.search.mockResolvedValue([{ symbol: "AAPL", name: "APPLE INC", type: "Common Stock" }]);
+      marketData.quote.mockResolvedValue(quote);
+      marketData.profile.mockResolvedValue(null);
+      marketData.metrics.mockResolvedValue(null);
+      marketData.history.mockResolvedValue([
+        { date: "2026-11-12", open: 1, high: 2, low: 0.5, close: 1.5, volume: 10 },
+        { date: "2026-11-13", open: 1, high: 2, low: 0.5, close: 1.5, volume: null },
+      ]);
+    });
+
+    it("GET /stocks/search?q=apple returns the results", async () => {
+      const res = await request(app).get("/stocks/search?q=apple").set(await auth());
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ query: "apple", results: [{ symbol: "AAPL", name: "APPLE INC", type: "stock" }] });
+    });
+
+    it("GET /stocks/search without q returns 400 and is not taken as a symbol", async () => {
+      const res = await request(app).get("/stocks/search").set(await auth());
+      expect(res.status).toBe(400);
+      expect(res.body).toEqual({ error: { code: "VALIDATION_ERROR", message: "q must be 1 to 50 characters" } });
+      expect(marketData.quote).not.toHaveBeenCalled();
+    });
+
+    it("GET /stocks/AAPL returns the detail", async () => {
+      const res = await request(app).get("/stocks/AAPL").set(await auth());
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ symbol: "AAPL", quote, profile: null, metrics: null });
+    });
+
+    it("GET /stocks/ZZZZZ returns 404 SYMBOL_NOT_FOUND", async () => {
+      marketData.quote.mockResolvedValue(null);
+      const res = await request(app).get("/stocks/ZZZZZ").set(await auth());
+      expect(res.status).toBe(404);
+      expect(res.body).toEqual({ error: { code: "SYMBOL_NOT_FOUND", message: "Symbol not found" } });
+    });
+
+    it("GET /stocks/AAPL/history?range=6M returns the candles", async () => {
+      const res = await request(app).get("/stocks/AAPL/history?range=6M").set(await auth());
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({ symbol: "AAPL", range: "6M", interval: "1day" });
+      expect(res.body.candles).toHaveLength(2);
+    });
+
+    it("GET /stocks/AAPL/history?range=2Y returns 400", async () => {
+      const res = await request(app).get("/stocks/AAPL/history?range=2Y").set(await auth());
+      expect(res.status).toBe(400);
+      expect(res.body.error).toEqual({ code: "VALIDATION_ERROR", message: "range must be one of 1M, 6M, 1Y, 5Y" });
+    });
+
+    it.each(["/stocks/search?q=apple", "/stocks/AAPL", "/stocks/AAPL/history?range=6M"])(
+      "%s without a token returns 401",
+      async (path) => {
+        const res = await request(app).get(path);
+        expect(res.status).toBe(401);
+        expect(res.body.error.code).toBe("UNAUTHORIZED");
+      },
+    );
   });
 });

@@ -27,6 +27,7 @@ Codigos de error definidos hasta ahora:
 | 401 | `UNAUTHORIZED` | F01: falta el token o es invalido/expirado |
 | 404 | `PROFILE_NOT_FOUND` | F01: el usuario autenticado no tiene fila en `profiles` |
 | 400 | `VALIDATION_ERROR` | F02: body, params o query invalidos (Zod) o JSON mal formado |
+| 404 | `SYMBOL_NOT_FOUND` | F03: el simbolo no existe en el proveedor |
 
 ## Market data providers
 
@@ -39,6 +40,9 @@ Ver F00. Finnhub (`https://finnhub.io/api/v1`) para search, quote, profile, metr
 | GET | `/health` | no | existente |
 | GET | `/me` | si | F01 |
 | PUT | `/me/risk-profile` | si | F02 |
+| GET | `/stocks/search?q=` | si | F03 |
+| GET | `/stocks/:symbol` | si | F03 |
+| GET | `/stocks/:symbol/history?range=` | si | F03 |
 
 F00 no agrega endpoints.
 
@@ -793,3 +797,222 @@ Anotar en `PRUEBAS-MANUALES.md`:
 3. Correr la verificacion manual de arriba.
 4. Prueba de humo contra el API: `PUT {API}/me/risk-profile` con el `access_token` y `{"answers":[3,2,3,2,3,2]}` → 200 con `riskScore: 15` y `riskProfile: "moderado"`; con 5 respuestas → 400 `VALIDATION_ERROR`; sin token → 401.
 5. Despliegue conjunto de F01 + F02 (ver F01): push solo cuando F02 este `ready`.
+
+---
+
+## F03 — Busqueda y detalle de stock
+
+**Estatus:** ready
+
+### Requisitos
+
+1. CUANDO un usuario autenticado llama `GET /stocks/search?q=`, EL sistema DEBE normalizar `q` (`trim` y minusculas), pedir `marketData.search(q)` via `getOrSet("finnhub:search:{q}", CACHE_TTL.search)`, filtrar (ver "Busqueda") y responder `200` con maximo 10 resultados.
+2. CUANDO `q` falta, viene repetido, o mide 0 o mas de 50 caracteres tras `trim`, EL sistema DEBE responder `400 VALIDATION_ERROR "q must be 1 to 50 characters"` sin llamar al proveedor.
+3. CUANDO la busqueda no tiene resultados validos, EL sistema DEBE responder `200` con `results: []`.
+4. CUANDO se llama `GET /stocks/:symbol`, EL sistema DEBE pedir quote, profile y metrics **en paralelo**, cada uno con su `getOrSet`, y componer la respuesta segun la tabla de "Composicion".
+5. CUANDO `quote` es `null`, EL sistema DEBE responder `404 { error: { code: "SYMBOL_NOT_FOUND", message: "Symbol not found" } }`, aunque profile o metrics tengan datos.
+6. CUANDO `quote` falla (502/503), EL sistema DEBE responder ese mismo error. CUANDO quote sale bien y fallan profile o metrics, EL sistema DEBE responder `200` con ese campo en `null` y loguear la causa (fallo parcial).
+7. CUANDO se llama `GET /stocks/:symbol/history?range=1M|6M|1Y|5Y`, EL sistema DEBE pedir la serie que corresponde al rango (ver "Historico"), recortarla al rango y responder las velas en orden cronologico ascendente y sin fechas repetidas.
+8. CUANDO `range` falta o no es uno de `1M`, `6M`, `1Y`, `5Y`, EL sistema DEBE responder `400 VALIDATION_ERROR "range must be one of 1M, 6M, 1Y, 5Y"`.
+9. CUANDO el historico del proveedor es `null`, EL sistema DEBE responder `404 SYMBOL_NOT_FOUND`; CUANDO es una lista vacia, `200` con `candles: []`.
+10. CUANDO `:symbol` no cumple el formato (ver "Simbolo"), EL sistema DEBE responder `400 VALIDATION_ERROR "Invalid symbol"` sin llamar al proveedor.
+11. Las tres rutas requieren auth (`401` sin token, F01). No usan Supabase con el JWT del usuario: solo leen market data, y la cache usa `adminClient` (F00).
+
+### Simbolo
+
+```ts
+// services/stockService.ts
+export const symbolSchema = z.string().trim().toUpperCase().regex(/^[A-Z]{1,5}(\.[A-Z])?$/);
+```
+
+- Se normaliza a mayusculas antes de validar: `/stocks/aapl` y `/stocks/AAPL` dan lo mismo y usan la misma key de cache.
+- Permitido: de 1 a 5 letras y, opcionalmente, una clase de accion de US de una letra (`BRK.B`). Sin digitos, guiones ni sufijos de otras bolsas de 2 o mas letras (`.MX`, `.DE`, `.TO`).
+- Un formato invalido es `400`, no `404`: Zod lo rechaza antes de gastar llamadas. El web trata `400` y `404` igual ("no encontrado"), ver 03-frontend.
+
+### Busqueda
+
+**Cambio al adaptador de F00 (`providers/finnhub.ts`):** `search` manda `exchange=US`, es decir `GET /search?q={query}&exchange=US`. La firma `search(query)` de `MarketDataProvider` no cambia. Verificado con la key real: sin el filtro, `spy` devuelve SPY.AX, SPY.BA y SPY.MX, y `apple` trae 603020.SS y 2788.T. Con `exchange=US` solo quedan simbolos de US, y `berkshire` devuelve `BRK.A`. Esto reemplaza el endpoint de `search` de la tabla "Mapeo a endpoints" de F00 (la seccion F00 no se edita porque ya esta `ready`) y actualiza el caso de `search` en `providers/finnhub.test.ts` (ver tests).
+
+Aun con `exchange=US`, Finnhub devuelve otros instrumentos y puede repetir simbolos. El service filtra en este orden:
+
+1. Solo `type` en `{"Common Stock" → "stock", "ADR" → "stock", "ETP" → "etf"}`. Los ADRs (TSM, BABA, NVO) se muestran como "Acción" por decision del dueño. Se descartan REIT, PFD, warrants, units, rights, etc. Tipos reales verificados: `Common Stock`, `ETP` (SPY) y `ADR`.
+2. Solo `symbol` que cumpla el mismo patron que `symbolSchema`: `/^[A-Z]{1,5}(\.[A-Z])?$/`. Entran las clases de US (`BRK.A`, `BRK.B`). Es una segunda defensa por si algun simbolo raro pasa el filtro de bolsa.
+3. Sin duplicados por `symbol`, conservando el primero. Por ejemplo, `baba` devuelve `BABA` como `ADR` y como `Common Stock`, y solo queda el primero.
+4. Se conserva el orden de Finnhub (relevancia) y se toman los primeros 10.
+
+Se cachea la respuesta cruda del proveedor y se filtra despues (convencion de F00: `getOrSet` envuelve la llamada al provider). Asi un cambio en el filtro no obliga a vaciar la cache.
+
+`q` se manda al proveedor ya normalizado (`trim` + minusculas), el mismo valor que la key: `"Apple"` y `"apple "` comparten fila de cache.
+
+Respuesta `200`:
+
+```json
+{
+  "query": "apple",
+  "results": [
+    { "symbol": "AAPL", "name": "APPLE INC", "type": "stock" },
+    { "symbol": "APLE", "name": "APPLE HOSPITALITY REIT INC", "type": "stock" }
+  ]
+}
+```
+
+`name` es el `description` de Finnhub tal cual (viene en mayusculas). `type`: `"stock" | "etf"`.
+
+### Composicion de `GET /stocks/:symbol`
+
+```ts
+const [quote, profile, metrics] = await Promise.allSettled([
+  getOrSet(`finnhub:quote:${S}`, CACHE_TTL.quote, () => marketData.quote(S)),
+  getOrSet(`finnhub:profile:${S}`, CACHE_TTL.profile, () => marketData.profile(S)),
+  getOrSet(`finnhub:metrics:${S}`, CACHE_TTL.metrics, () => marketData.metrics(S)),
+]);
+```
+
+| quote | profile / metrics | Respuesta |
+|---|---|---|
+| rechazada (`AppError` 502/503) | cualquiera | se relanza el error de quote |
+| `null` | cualquiera | `404 SYMBOL_NOT_FOUND` |
+| ok | ok o `null` | `200` con el valor (`null` = el proveedor no tiene ese dato, p. ej. ETFs sin profile2) |
+| ok | rechazada | `200` con ese campo en `null` + `console.error("[stocks] {profile|metrics} {S} failed:", reason)` |
+
+- **El quote decide el 404.** Es el unico dato que existe para toda accion y ETF de US: Finnhub manda `t: 0` si el simbolo no existe y F00 lo traduce a `null`. Profile y metrics suelen venir vacios para ETFs en el plan gratuito, asi que no sirven para decidir.
+- **En paralelo, no "quote primero":** la ficha tarda lo que la llamada mas lenta, no la suma de las tres. Costo aceptado: un simbolo inexistente gasta 3 llamadas a Finnhub cada vez, porque `getOrSet` no guarda `null`. El web valida el formato antes, para que la basura no llegue al API.
+- **No hay campo de "fallo parcial":** para el usuario, "no hay dato" y "no se pudo traer" se ven igual ("—"). Los fallos no se cachean, asi que el siguiente request reintenta.
+
+Respuesta `200` (tipos de dominio de F00, sin renombrar):
+
+```json
+{
+  "symbol": "AAPL",
+  "quote": { "symbol": "AAPL", "price": 189.84, "change": 2.31, "changePercent": 1.23, "high": 190.1, "low": 186.9,
+             "open": 187.2, "previousClose": 187.53, "timestamp": 1795545600 },
+  "profile": { "symbol": "AAPL", "name": "Apple Inc", "logoUrl": "https://…/AAPL.png", "industry": "Technology",
+               "country": "US", "website": "https://www.apple.com/", "exchange": "NASDAQ NMS - GLOBAL MARKET",
+               "currency": "USD", "marketCapMillions": 2950000 },
+  "metrics": { "peRatio": 29.4, "beta": 1.24, "week52High": 199.62, "week52Low": 164.08,
+               "dividendYieldPercent": 0.51, "marketCapMillions": 2950000 }
+}
+```
+
+`changePercent` y `dividendYieldPercent` ya vienen en puntos porcentuales (`1.23` = 1.23 %). `marketCapMillions` va en millones de USD.
+
+### Historico
+
+Una sola serie diaria alimenta 1M, 6M y 1Y, y 5Y usa una serie semanal. Twelve Data cobra 1 credito por llamada a `time_series` sin importar el `outputsize`. Asi, un simbolo gasta como maximo **2 creditos cada 12 h**, en vez de 4.
+
+| range | interval | outputsize | key de cache | recorte |
+|---|---|---|---|---|
+| `1M` | `1day` | 260 | `twelvedata:history:{S}:1day:260` | ultimo mes |
+| `6M` | `1day` | 260 | (la misma) | ultimos 6 meses |
+| `1Y` | `1day` | 260 | (la misma) | ultimos 12 meses |
+| `5Y` | `1week` | 270 | `twelvedata:history:{S}:1week:270` | ultimos 60 meses |
+
+- 260 velas diarias cubren un año (unas 252 sesiones) con margen; 270 semanales cubren 5 años (unas 261 semanas).
+- **Recorte** (`sliceRange`, funcion pura exportada):
+  - El ancla es la `date` de la ultima vela, no "hoy". Asi funciona igual en fin de semana, en feriados y con cache de hasta 12 h.
+  - `corte = ancla − N meses`, en UTC (`setUTCMonth`).
+  - Se devuelven las velas con `date > corte`.
+- **Orden:** el provider ya pide `order=asc`. El service ademas garantiza fechas estrictamente ascendentes y descarta las repetidas (se queda la primera), porque `lightweight-charts` lanza error con datos desordenados o duplicados.
+- **Gancho F08:** `technicals` reutilizara la serie diaria cacheada.
+
+Respuesta `200`:
+
+```json
+{
+  "symbol": "AAPL",
+  "range": "6M",
+  "interval": "1day",
+  "candles": [
+    { "date": "2026-05-19", "open": 187.2, "high": 190.1, "low": 186.9, "close": 189.84, "volume": 51234000 }
+  ]
+}
+```
+
+`date` es `"YYYY-MM-DD"` (en `1week`, el primer dia de la semana segun Twelve Data). `volume` puede ser `null`.
+
+### Presupuesto de llamadas (plan gratuito)
+
+| Accion del usuario | Finnhub (60/min) | Twelve Data (8/min, 800/dia) |
+|---|---|---|
+| Autocompletado o busqueda, por `q` distinta | 1 (cache 24 h) | 0 |
+| Abrir una ficha sin cache | 3 (quote 60 s; profile y metrics 7 dias) | 0 |
+| Abrir la misma ficha antes de 60 s | 0 | 0 |
+| Grafica 1M, 6M o 1Y | 0 | 1 por simbolo cada 12 h (compartida) |
+| Grafica 5Y | 0 | 1 por simbolo cada 12 h |
+
+Lo que limita la demo es Twelve Data: en el peor caso, unos 400 simbolos distintos al dia. El web solo pide el rango visible: no precarga los demas ni pide el historico en el servidor (ver 03-frontend).
+
+### Capas y archivos
+
+```
+api/src/
+├── routes/index.ts                 # + 3 rutas debajo de requireAuth
+├── controllers/stocksController.ts # getStockSearch, getStockDetail, getStockHistoryHandler
+└── services/stockService.ts        # validacion Zod, cache, filtro, composicion y recorte
+```
+
+- `routes/index.ts`: registrar `router.get("/stocks/search", getStockSearch)` **antes** de `router.get("/stocks/:symbol", getStockDetail)`, y despues `router.get("/stocks/:symbol/history", getStockHistoryHandler)`. Si se registran al reves, `search` se toma como simbolo.
+- Los controllers solo pasan lo que llega (`req.query.q`, `req.params.symbol`, `req.query.range`) y responden con `res.json(...)`.
+- `services/stockService.ts` recibe `unknown` y valida con Zod, como `profileService`; asi REST, MCP y chat validan igual:
+
+```ts
+export type StockRange = "1M" | "6M" | "1Y" | "5Y";
+export const rangeSchema = z.enum(["1M", "6M", "1Y", "5Y"]);
+export const searchQuerySchema = z.string().trim().toLowerCase().min(1).max(50);
+
+export interface StockSearchResult { symbol: string; name: string; type: "stock" | "etf" }
+export interface StockDetail { symbol: string; quote: Quote; profile: CompanyProfile | null; metrics: CompanyMetrics | null }
+export interface StockHistory { symbol: string; range: StockRange; interval: HistoryInterval; candles: Candle[] }
+
+export async function searchStocks(q: unknown): Promise<{ query: string; results: StockSearchResult[] }>;
+export async function getStock(symbol: unknown): Promise<StockDetail>;
+export async function getStockHistory(symbol: unknown, range: unknown): Promise<StockHistory>;
+
+/** Puras, exportadas para tests. */
+export function filterSearchResults(results: SymbolSearchResult[]): StockSearchResult[];
+export function sliceRange(candles: Candle[], range: StockRange): Candle[];
+```
+
+- Usa `marketData` de `providers/index.js` y `getOrSet`/`CACHE_TTL` de `services/cache.js`. Nunca un adaptador concreto.
+- `AppError(404, "SYMBOL_NOT_FOUND", "Symbol not found")` va en un helper privado.
+- **Gancho F07** (no se implementa): `getStock` es el punto donde se registrara `view_stock`. F07 le agregara el usuario y el token, y registrara despues de componer la respuesta, sin romperla si falla.
+- **Gancho F04** (no se implementa): los quotes de favoritos usaran la misma key `finnhub:quote:{S}`.
+
+- `providers/finnhub.ts`: `search` agrega `exchange: "US"` a sus params (unico cambio fuera de los archivos nuevos).
+
+**Dependencias nuevas:** ninguna.
+
+**Variables de entorno:** ninguna nueva. Desde F03 el navegador llama al API directo (autocompletado e historico), asi que `CORS_ORIGIN` debe incluir el dominio del web. En Production ya es `https://broker-app-web-nine.vercel.app` (verificado); en Preview es `http://localhost:3000`.
+
+### Estrategia de tests (sin red ni Supabase real)
+
+- `vi.mock("../providers/index.js")` con un `marketData` que tiene un `vi.fn()` por metodo.
+- `vi.mock("../lib/supabase.js")` con el fake del query builder de F00, que guarda lo que se hace upsert. Asi se ejercita el `getOrSet` real y se puede contar cuantas veces se llama al provider.
+- Los providers ya tienen sus tests con `fetch` mockeado (F00). F03 solo actualiza el caso de `search`. El mapeo de errores no cambia: Finnhub llego a responder HTML en lugar de JSON (fallo transitorio, verificado) y F00 ya lo convierte en `502 PROVIDER_ERROR`, cubierto por `http.test.ts`.
+
+| Archivo | Casos |
+|---|---|
+| `providers/finnhub.test.ts` (actualizar) | `search("apple")` pide `/search?q=apple&exchange=US` con el header `X-Finnhub-Token`. El mapeo a `SymbolSearchResult` no cambia. |
+| `services/stockService.test.ts` (nuevo): busqueda | `"  Apple "` → provider llamado con `"apple"` y key `finnhub:search:apple`. Filtra `type`: Common Stock y ADR → `stock`, ETP → `etf`; descarta PFD, REIT y Warrant. Acepta `BRK.A` y `BRK.B`; descarta `AAPL.MX`, `0R2V.L` y `BRK-B`. Con `BABA` como ADR y luego como Common Stock, deja solo el primero. Con 15 validos corta en 10. Conserva el orden. `q` igual a `""`, `"   "`, 51 caracteres, `["a","b"]` o `undefined` → 400 sin llamar al provider. Dos busquedas iguales → provider llamado 1 vez. |
+| `services/stockService.test.ts`: detalle | `"aapl"` → las 3 llamadas con `AAPL` y en paralelo (las 3 arrancan antes de que se resuelva alguna). Quote `null` → 404 `SYMBOL_NOT_FOUND` aunque profile tenga datos. Quote rechaza con 503 → 503. Profile rechaza con 502 → 200 con `profile: null` y metrics presente. Metrics `null` → `metrics: null`. Simbolos invalidos (`""`, `"AAPL1"`, `"TOOLONG"`, `"AAPL.MX"`, `"BRK-B"`) → 400 sin llamadas. `"brk.b"` → `BRK.B` valido. **Dos detalles seguidos → cada provider llamado 1 vez** (la cache se usa). |
+| `services/stockService.test.ts`: historico | 1M, 6M y 1Y → `history(S, "1day", 260)`, con una sola llamada al provider para los tres. 5Y → `("1week", 270)`. `range` invalido o ausente → 400. Provider `null` → 404. `[]` → `candles: []`. Entrada desordenada y con una fecha repetida → salida ascendente y sin repetidas. |
+| `services/stockService.test.ts`: `sliceRange` | Ancla en la ultima vela: con velas diarias del 2025-11-14 al 2026-11-13, 1M devuelve solo `date > 2026-10-13` y 1Y devuelve `date > 2025-11-13`. Fin de mes: con ancla 2026-03-31, 1M corta segun `setUTCMonth` y el test fija el valor esperado. Lista vacia → vacia. |
+| `app.test.ts` (actualizar) | Con el token HS256 de prueba y `marketData` mockeado: `GET /stocks/search?q=apple` → 200 con el shape; sin `q` → 400 `VALIDATION_ERROR`; `GET /stocks/AAPL` → 200; `GET /stocks/ZZZZZ` con quote `null` → 404 `{ error: { code: "SYMBOL_NOT_FOUND", message } }`; `GET /stocks/AAPL/history?range=6M` → 200; `range=2Y` → 400; `GET /stocks/search` no se interpreta como simbolo; las tres rutas sin token → 401. |
+
+### Pasos manuales pendientes
+
+Anotar en `PRUEBAS-MANUALES.md`:
+
+1. `CORS_ORIGIN`: en Production no hay nada que hacer (ya es `https://broker-app-web-nine.vercel.app`). Solo si se quiere probar un deploy de Preview desde su propio dominio, agregar ese dominio en Preview y hacer redeploy.
+2. Con un `access_token` real (de DevTools o de `supabase.auth.getSession()`), contra el API local y el desplegado:
+   - `GET /stocks/search?q=apple` → incluye `AAPL` con `type: "stock"` y ningun simbolo extranjero (`603020.SS`, `2788.T`).
+   - `GET /stocks/search?q=spy` → solo `SPY` (sin SPY.AX, SPY.BA ni SPY.MX), con `type: "etf"`.
+   - `GET /stocks/search?q=berkshire` → incluye `BRK.A` y/o `BRK.B`.
+   - `GET /stocks/search?q=baba` → `BABA` una sola vez, con `type: "stock"`.
+   - `GET /stocks/AAPL` → 200 con quote, profile y metrics.
+   - `GET /stocks/SPY` → 200; profile o metrics pueden venir `null`.
+   - `GET /stocks/ZZZZZ` → 404 `SYMBOL_NOT_FOUND`.
+   - `GET /stocks/AAPL1` → 400.
+   - `GET /stocks/AAPL/history?range=1M` y luego `range=1Y` → en `provider_cache` hay una sola fila `twelvedata:history:AAPL:1day:260`. `range=5Y` agrega `…:1week:270`. Las velas van en orden ascendente.
+3. En Table Editor, `provider_cache` muestra las keys `finnhub:search:apple`, `finnhub:quote:AAPL`, `finnhub:profile:AAPL` y `finnhub:metrics:AAPL` con su `expires_at`.
+4. Repetir `GET /stocks/AAPL` antes de que pasen 60 s: en el dashboard de Finnhub (o en los logs) no aparecen llamadas nuevas.

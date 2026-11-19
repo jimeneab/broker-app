@@ -99,6 +99,52 @@ describe("api client", () => {
     });
   });
 
+  describe("stocks", () => {
+    const quote = {
+      symbol: "BRK.B",
+      price: 1,
+      change: null,
+      changePercent: null,
+      high: 1,
+      low: 1,
+      open: 1,
+      previousClose: 1,
+      timestamp: 1,
+    };
+
+    it("searchStocks encodes q and sends the token", async () => {
+      const body = { query: "s&p", results: [{ symbol: "SPY", name: "SPDR S&P 500", type: "etf" }] };
+      fetchMock.mockResolvedValue(Response.json(body));
+      await expect(api.searchStocks("s&p", { token: "jwt" })).resolves.toEqual(body);
+      expect(fetchMock.mock.calls[0]?.[0]).toBe("http://api.test/stocks/search?q=s%26p");
+      expect(sentHeaders().Authorization).toBe("Bearer jwt");
+    });
+
+    it("searchStocks rejects an unknown type", async () => {
+      fetchMock.mockResolvedValue(Response.json({ query: "x", results: [{ symbol: "X", name: "X", type: "reit" }] }));
+      await expect(api.searchStocks("x")).rejects.toMatchObject({ code: "INVALID_RESPONSE" });
+    });
+
+    it("stock requests the symbol path and parses the detail", async () => {
+      const body = { symbol: "BRK.B", quote, profile: null, metrics: null };
+      fetchMock.mockResolvedValue(Response.json(body));
+      await expect(api.stock("BRK.B")).resolves.toEqual(body);
+      expect(fetchMock.mock.calls[0]?.[0]).toBe("http://api.test/stocks/BRK.B");
+    });
+
+    it("stockHistory requests the range and parses the candles", async () => {
+      const body = {
+        symbol: "AAPL",
+        range: "1Y",
+        interval: "1day",
+        candles: [{ date: "2026-05-19", open: 1, high: 2, low: 0.5, close: 1.5, volume: null }],
+      };
+      fetchMock.mockResolvedValue(Response.json(body));
+      await expect(api.stockHistory("AAPL", "1Y")).resolves.toEqual(body);
+      expect(fetchMock.mock.calls[0]?.[0]).toBe("http://api.test/stocks/AAPL/history?range=1Y");
+    });
+  });
+
   it.each([
     ["PROVIDER_RATE_LIMITED", "Demasiadas solicitudes al proveedor de datos. Intenta de nuevo en un minuto."],
     ["PROVIDER_ERROR", "El proveedor de datos no respondió correctamente."],
@@ -106,6 +152,7 @@ describe("api client", () => {
     ["UNAUTHORIZED", "Tu sesión expiró. Inicia sesión de nuevo."],
     ["PROFILE_NOT_FOUND", "No encontramos tu perfil."],
     ["VALIDATION_ERROR", "Revisa tus respuestas e intenta de nuevo."],
+    ["SYMBOL_NOT_FOUND", "No encontramos ese símbolo."],
     ["SOMETHING_ELSE", "Algo salió mal. Intenta de nuevo."],
   ])("errorMessage(%s)", (code, message) => {
     expect(errorMessage(new ApiError(500, code, "x"))).toBe(message);

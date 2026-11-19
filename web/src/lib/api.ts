@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { publicEnv } from "./env";
+import type { StockRange } from "./stocks";
 
 export class ApiError extends Error {
   constructor(
@@ -66,12 +67,77 @@ const meSchema = z.object({
 });
 export type Me = z.infer<typeof meSchema>;
 
+const quoteSchema = z.object({
+  symbol: z.string(),
+  price: z.number(),
+  change: z.number().nullable(),
+  changePercent: z.number().nullable(),
+  high: z.number(),
+  low: z.number(),
+  open: z.number(),
+  previousClose: z.number(),
+  timestamp: z.number(),
+});
+const profileSchema = z.object({
+  symbol: z.string(),
+  name: z.string(),
+  logoUrl: z.string().nullable(),
+  industry: z.string().nullable(),
+  country: z.string().nullable(),
+  website: z.string().nullable(),
+  exchange: z.string().nullable(),
+  currency: z.string().nullable(),
+  marketCapMillions: z.number().nullable(),
+});
+const metricsSchema = z.object({
+  peRatio: z.number().nullable(),
+  beta: z.number().nullable(),
+  week52High: z.number().nullable(),
+  week52Low: z.number().nullable(),
+  dividendYieldPercent: z.number().nullable(),
+  marketCapMillions: z.number().nullable(),
+});
+const stockSearchSchema = z.object({
+  query: z.string(),
+  results: z.array(z.object({ symbol: z.string(), name: z.string(), type: z.enum(["stock", "etf"]) })),
+});
+const stockDetailSchema = z.object({
+  symbol: z.string(),
+  quote: quoteSchema,
+  profile: profileSchema.nullable(),
+  metrics: metricsSchema.nullable(),
+});
+const candleSchema = z.object({
+  date: z.string(),
+  open: z.number(),
+  high: z.number(),
+  low: z.number(),
+  close: z.number(),
+  volume: z.number().nullable(),
+});
+const stockHistorySchema = z.object({
+  symbol: z.string(),
+  range: z.enum(["1M", "6M", "1Y", "5Y"]),
+  interval: z.enum(["1day", "1week"]),
+  candles: z.array(candleSchema),
+});
+
+export type StockSearchResult = z.infer<typeof stockSearchSchema>["results"][number];
+export type StockDetail = z.infer<typeof stockDetailSchema>;
+export type Candle = z.infer<typeof candleSchema>;
+
 /** Typed endpoints. Each feature adds its own here. */
 export const api = {
   health: (opts?: RequestOptions) => request("/health", z.object({ status: z.literal("ok") }), opts),
   me: (opts?: RequestOptions) => request("/me", meSchema, opts),
   saveRiskProfile: (answers: number[], opts?: Omit<RequestOptions, "method" | "body">) =>
     request("/me/risk-profile", meSchema, { ...opts, method: "PUT", body: { answers } }),
+  searchStocks: (q: string, opts?: RequestOptions) =>
+    request(`/stocks/search?${new URLSearchParams({ q })}`, stockSearchSchema, opts),
+  stock: (symbol: string, opts?: RequestOptions) =>
+    request(`/stocks/${encodeURIComponent(symbol)}`, stockDetailSchema, opts),
+  stockHistory: (symbol: string, range: StockRange, opts?: RequestOptions) =>
+    request(`/stocks/${encodeURIComponent(symbol)}/history?range=${range}`, stockHistorySchema, opts),
 };
 
 const messages: Record<string, string> = {
@@ -80,6 +146,7 @@ const messages: Record<string, string> = {
   NETWORK_ERROR: "No se pudo conectar con el servidor.",
   UNAUTHORIZED: "Tu sesión expiró. Inicia sesión de nuevo.",
   PROFILE_NOT_FOUND: "No encontramos tu perfil.",
+  SYMBOL_NOT_FOUND: "No encontramos ese símbolo.",
   VALIDATION_ERROR: "Revisa tus respuestas e intenta de nuevo.",
 };
 

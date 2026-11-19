@@ -594,3 +594,326 @@ Cuando la migracion de F02 este aplicada (anotar en `PRUEBAS-MANUALES.md`), en l
 6. Rehacer con todas las opciones 4 → "Agresivo", "24 de 24"; en Table Editor `risk_score = 24`, `risk_profile = agresivo` y `onboarded_at` igual al de la primera vez.
 7. Con el API apagado, enviar la pregunta 6 → alerta "No se pudo conectar con el servidor." y las respuestas siguen ahi; con el API encendido, reintentar funciona.
 8. Solo teclado y a 375 px (claro y oscuro): sin scroll horizontal y foco visible.
+
+---
+
+## F03 — Busqueda y detalle de stock
+
+**Estatus:** ready
+
+### Verificado en la documentacion de Next 16 (`web/node_modules/next/dist/docs/01-app/`)
+
+- `03-api-reference/03-file-conventions/dynamic-routes.md` (lineas 148-163): `params` es una `Promise`. Con Cache Components y sin `generateStaticParams`, los params son runtime data: "Param access must be wrapped by Suspense fallback UI". Next genera un shell estatico y el contenido carga en cada request.
+- `03-api-reference/03-file-conventions/page.md` (lineas 117-119): `searchParams` es una `Promise` y una Request-time API, asi que la pagina que la lee se renderiza en el request.
+- `03-api-reference/04-functions/generate-metadata.md` ("With Cache Components"): si `generateMetadata` lee `params`, se difiere al request. Eso es valido cuando otras partes de la pagina tambien se difieren, como aqui. Si el resto fuera prerenderizable, el build exigiria una decision explicita.
+- `03-api-reference/04-functions/not-found.md` (lineas 85-195): `notFound()` dentro de un `<Suspense>` que ya empezo a hacer streaming mantiene el status `200` (solo agrega `noindex`).
+- `02-guides/lazy-loading.md` (lineas 66 y 94) y `02-guides/single-page-applications.md` (lineas 205-217): `ssr: false` solo funciona dentro de Client Components. Para librerias que dependen de `window`, la alternativa es cargarlas en un `useEffect`.
+- `01-getting-started/07-mutating-data.md` (linea 207): las Server Functions "are designed for server-side mutations. The client dispatches and awaits them one at a time". Para leer datos se usan Server Components u otra via.
+- `03-api-reference/02-components/form.md` (lineas 86-88): `<Form action="/search">` con `action` string se comporta como un `<form method="GET">`: pone los campos en la URL como search params y navega del lado del cliente. Sin JS funciona igual (progressive enhancement).
+- `03-api-reference/04-functions/use-search-params.md` (lineas 82-88): `useSearchParams` obliga a un `<Suspense>` en rutas prerenderizadas. El buscador del header **no** lo usa, para no meter otro boundary en el layout.
+
+### Requisitos
+
+1. CUANDO se renderiza cualquier ruta de `(app)`, EL header DEBE montar `HeaderSearch` en el slot `data-slot="search"`.
+2. CUANDO el usuario escribe en `HeaderSearch`, EL sistema DEBE llamar `api.searchStocks(q)` 300 ms despues de la ultima tecla, con `q` recortado y no vacio (y como maximo 50 caracteres). Cada tecla nueva cancela el timer pendiente y aborta la peticion en vuelo.
+3. CUANDO llegan resultados, EL sistema DEBE mostrar una lista (hasta 10) con simbolo, nombre y tipo ("Acción" o "ETF"), siguiendo el patron ARIA combobox + listbox. CUANDO no hay resultados, "Sin resultados"; mientras carga, "Buscando…"; con error, el `errorMessage(err)`.
+4. CUANDO el usuario pulsa Enter con una opcion activa (flechas) o hace clic en una opcion, EL sistema DEBE navegar a `/stocks/{SYMBOL}`, cerrar la lista y vaciar el input.
+5. CUANDO el usuario pulsa Enter sin opcion activa, EL formulario DEBE navegar a `/search?q={texto}`.
+6. CUANDO el usuario pulsa Escape o el foco sale del componente, la lista DEBE cerrarse.
+7. CUANDO se abre `/search` sin `q` (o con `q` vacio), EL sistema DEBE mostrar el buscador de la pagina vacio y un `EmptyState` que invite a buscar, sin llamar al API.
+8. CUANDO se abre `/search?q=texto`, EL sistema DEBE renderizar en el servidor el buscador con `texto` y la lista de resultados: cada uno es un enlace a `/stocks/{SYMBOL}` con simbolo, nombre y tipo. Sin resultados → `EmptyState` "Sin resultados para «texto»". Con error → `ErrorState`.
+9. CUANDO se abre `/stocks/{symbol}`, EL sistema DEBE normalizar el simbolo (`normalizeSymbol`). Si no es valido, DEBE mostrar el estado "no encontrado" sin llamar al API.
+10. CUANDO el simbolo es valido, EL sistema DEBE renderizar en el servidor, dentro de un `<Suspense>`, el encabezado (`StockHeader`), las pestañas y las metricas (`StockMetrics`) con `api.stock`. La grafica (`PriceChart`) es un Client Component que pide su historico despues de hidratar.
+11. CUANDO `api.stock` responde `404 SYMBOL_NOT_FOUND` o `400 VALIDATION_ERROR`, EL sistema DEBE mostrar `EmptyState` "No encontramos el símbolo {X}" con el enlace "Buscar «X»" a `/search?q={X}`. Se muestra inline y no con `notFound()`, porque despues del streaming el status seguiria siendo 200 (ver docs) y asi se conserva el layout con un siguiente paso util. Otros errores → `ErrorState` con `errorMessage(err)`.
+12. CUANDO cambia el rango en `PriceChart`, EL sistema DEBE pedir `api.stockHistory(symbol, range)` solo si ese rango no esta ya en la memoria del componente, y actualizar la grafica. Una peticion anterior aun en vuelo se aborta.
+13. CUANDO el historico esta cargando, viene vacio o falla, `PriceChart` DEBE mostrar `LoadingState`, `EmptyState` ("No hay histórico para este rango.") o `ErrorState` con el boton "Reintentar", en el mismo alto que la grafica (sin salto de layout).
+14. CUANDO cambia `prefers-color-scheme`, la grafica DEBE volver a aplicar los colores del tema.
+15. `nav-items.ts`: "Buscar" pasa a `available: true`. Se marca activo en `/search` por la regla de prefijo de F00; en `/stocks/*` no se marca ningun item.
+
+### Dependencias nuevas (`web/`)
+
+- `lightweight-charts` `^5` (dependency). Nada mas.
+
+Variables de entorno: ninguna nueva.
+
+### Estructura de archivos
+
+```
+web/src/
+├── app/(app)/
+│   ├── search/page.tsx                  # Server: h1 + <Suspense><SearchResults searchParams/></Suspense>
+│   └── stocks/[symbol]/page.tsx         # Server: generateMetadata + <Suspense><StockOverview params/></Suspense>
+├── components/
+│   ├── layout/
+│   │   ├── Header.tsx                   # monta <HeaderSearch/> dentro del slot
+│   │   └── nav-items.ts                 # Buscar: available: true
+│   └── stocks/
+│       ├── HeaderSearch.tsx             # "use client": combobox con debounce
+│       ├── SearchResults.tsx            # Server async: <Form> + lista de resultados
+│       ├── StockOverview.tsx            # Server async: api.stock → StockHeader + StockTabs(StockMetrics, PriceChart)
+│       ├── StockHeader.tsx              # Server: logo, nombre, precio, cambio con color, hora, slot favorito
+│       ├── StockMetrics.tsx             # Server: tarjetas de metricas y datos de la empresa
+│       ├── StockTabs.tsx                # Server: tablist (Resumen activa; Técnico y Noticias deshabilitadas)
+│       └── PriceChart.tsx               # "use client": selector de rango + lightweight-charts
+└── lib/
+    ├── api.ts                           # + searchStocks, stock, stockHistory y SYMBOL_NOT_FOUND
+    ├── format.ts                        # formatos es-MX
+    └── stocks.ts                        # normalizeSymbol, STOCK_RANGES, DEFAULT_RANGE
+```
+
+### Frontera Server / Client
+
+| Componente | Tipo | Por que |
+|---|---|---|
+| `SearchResults`, `StockOverview`, `StockHeader`, `StockMetrics`, `StockTabs` | Server | Datos con SSR: el encabezado y las metricas llegan en el HTML. No mandan JS al cliente. |
+| `HeaderSearch` | Client | Teclado, debounce y estado de la lista. |
+| `PriceChart` | Client | `lightweight-charts` dibuja en `<canvas>` y necesita `window`. |
+
+- `lightweight-charts` **solo se importa dentro del `useEffect`** de `PriceChart` (`await import("lightweight-charts")`). Asi nunca se evalua en el servidor y queda en su propio chunk, que se descarga despues de hidratar. No hace falta `next/dynamic` con `ssr: false`, que ademas solo funciona dentro de un Client Component (ver docs). El HTML del servidor trae el selector de rango y el skeleton con el alto final.
+- `StockTabs` es Server en F03, porque Técnico y Noticias estan deshabilitadas y no hay estado. F05/F08 lo convierten en Client cuando haya paneles que alternar.
+- Nada de `"use cache"`: todos los datos van con el JWT del usuario (convencion de F00). La cache vive en el API.
+
+### Carga del historico: cliente → API con el JWT
+
+`PriceChart` llama `api.stockHistory(symbol, range, { token: await getBrowserAccessToken(), signal })` directo al Express.
+
+| Opcion | Decision |
+|---|---|
+| **Cliente → API con JWT** (elegida) | Un solo salto. Se puede abortar con `AbortController` cuando el usuario cambia rapido de rango. No gasta una invocacion de funcion de Next en Vercel. El token ya esta en el navegador (sesion de `@supabase/ssr`). Requisito: `CORS_ORIGIN` del API incluye el dominio del web. En Production ya esta configurado (ver 02-backend). |
+| Server Action | Descartada. Son para mutaciones y el cliente las despacha **una a la vez** (docs): los cambios de rango quedarian en cola, sin forma de abortar. Ademas suma el salto navegador → Next → API. |
+| Route Handler en Next (BFF) | Descartada. Agrega un salto y un cold start, y duplica una ruta que el API ya expone con auth. |
+| Pedirlo en el servidor con el render | Descartada. La grafica no se puede pintar en el servidor y gastaria 1 credito de Twelve Data en cada carga aunque el usuario no mire la grafica. Ademas haria mas pesado el HTML. |
+
+- Al montar se pide solo `DEFAULT_RANGE` (`6M`); los demas rangos, solo cuando se eligen. Lo ya traido se guarda en un `useRef<Map<StockRange, Candle[]>>` del componente, para que volver a un rango no repita la llamada (el API igual lo tendria en cache).
+- Una carrera entre respuestas se evita abortando la anterior. Un `AbortError` no se muestra como error.
+
+### `HeaderSearch` (`"use client"`)
+
+- Markup: `<Form action="/search" role="search">` (de `next/form`) con:
+  - `<label className="sr-only" htmlFor="header-search">Buscar acciones o ETFs</label>`.
+  - `<input id="header-search" name="q" type="search" role="combobox" aria-autocomplete="list" aria-expanded aria-controls="header-search-listbox" aria-activedescendant autoComplete="off" maxLength={50} placeholder="Buscar símbolo o empresa">`.
+  - `<ul id="header-search-listbox" role="listbox">` con `<li role="option" id="header-search-opt-{i}" aria-selected>` por resultado.
+- El Enter sin opcion activa lo resuelve el `<Form>`: navega a `/search?q=` y funciona sin JS. Con opcion activa, `onKeyDown` hace `preventDefault()` y `router.push(\`/stocks/${symbol}\`)`.
+- Teclas: ArrowDown/ArrowUp mueven la opcion activa (con wrap) y abren la lista si hay resultados; Escape cierra.
+- Clic en una opcion: `onMouseDown={e => e.preventDefault()}` (evita que el blur cierre la lista antes del clic) y `onClick` → `router.push`.
+- Debounce: `useEffect` sobre el texto con `setTimeout(300)`; el cleanup hace `clearTimeout` y `controller.abort()`. Si el texto recortado esta vacio, se cierra la lista sin llamar al API.
+- Un `<p role="status" className="sr-only">` anuncia "{n} resultados" o "Sin resultados".
+- No usa `useSearchParams` ni `usePathname`: el `Header` (Server) lo monta sin `<Suspense>`.
+- Estilo: input con los tokens de F00. La lista es un panel `surface` con borde, posicionado bajo el input con el ancho del slot, `max-h` con scroll y la opcion activa en `accent-soft`. El tipo va como badge neutro. A 375 px el input se encoge (`min-w-0`) sin empujar el menu de usuario.
+
+### `/search`
+
+```tsx
+// app/(app)/search/page.tsx
+export const metadata: Metadata = { title: "Buscar · Stock Insights" };
+
+export default function SearchPage({ searchParams }: PageProps<"/search">) {
+  // <h1>Buscar</h1>
+  // <Suspense fallback={<><SearchForm q="" /><LoadingState /></>}>
+  //   <SearchResults searchParams={searchParams} />
+  // </Suspense>
+}
+```
+
+- `SearchResults` (Server, async):
+  - `q` = primer valor si viene arreglo; luego `trim()` y `slice(0, 50)`.
+  - Renderiza `<Form action="/search">`, con un input `name="q"`, `defaultValue={q}` y `key={q}` (para que el valor se actualice entre navegaciones), y el boton "Buscar".
+  - Sin `q`: `EmptyState` "Busca una empresa o ETF" con la descripcion "Escribe un nombre o símbolo, por ejemplo Apple o AAPL.".
+  - Con `q`: `api.searchStocks(q, { token })` en `try/catch`. El resultado es una lista `<ul>` de enlaces: simbolo en negrita, nombre (`truncate`) y badge "Acción" o "ETF".
+- El formulario de la pagina es un componente local de `SearchResults.tsx` (se reutiliza en el fallback). No es `HeaderSearch`: aqui no hay autocompletado.
+
+### `/stocks/[symbol]`
+
+```tsx
+// app/(app)/stocks/[symbol]/page.tsx
+export async function generateMetadata({ params }: PageProps<"/stocks/[symbol]">): Promise<Metadata> {
+  const symbol = normalizeSymbol((await params).symbol);
+  return { title: `${symbol ?? "Stock"} · Stock Insights` }; // sin llamar al API: no gasta cuota
+}
+
+export default function StockPage({ params }: PageProps<"/stocks/[symbol]">) {
+  // <Suspense fallback={<LoadingState label="Cargando stock…" rows={5} />}>
+  //   <StockOverview params={params} />
+  // </Suspense>
+}
+```
+
+`StockOverview` (Server, async):
+
+1. `symbol = normalizeSymbol((await params).symbol)`. Si es `null` → `<SymbolNotFound raw={...} />` sin llamar al API.
+2. `token = await getServerAccessToken()`; `data = await api.stock(symbol, { token })` en `try/catch`. `ApiError` con `SYMBOL_NOT_FOUND` o `VALIDATION_ERROR` → `SymbolNotFound`; otro error → `ErrorState`.
+3. Fuera del `try`: `<StockHeader data />`, y debajo `<StockTabs>` con el panel Resumen: `<PriceChart symbol />` y luego `<StockMetrics data />`.
+
+`SymbolNotFound` es local de `StockOverview.tsx`: `EmptyState` con el titulo "No encontramos el símbolo {X}", la descripcion "Revisa que esté bien escrito o búscalo por nombre." y el enlace "Buscar «X»" a `/search?q={X}` (codificado).
+
+### `StockHeader` (Server)
+
+- Logo: `<img src={logoUrl} alt="" width={40} height={40}>`, solo si hay `logoUrl`. Un `<img>` normal y no `next/image`: el logo viene de un dominio externo y la optimizacion de imagenes no aporta en un icono de 40 px. Lleva un `eslint-disable-next-line @next/next/no-img-element` con ese motivo.
+- `<h1>`: `profile?.name ?? symbol`. Debajo, el simbolo y `profile?.exchange` en `muted`.
+- `<div data-slot="favorite" />` junto al titulo. Es el **gancho F04**: ahi ira la estrella. F03 lo deja vacio.
+- Precio: `formatCurrency(quote.price)`, grande y con `tabular-nums`.
+- Cambio: `▲ +2.31 (+1.23%)` en `text-up` si `change > 0`; `▼ -1.05 (-0.55%)` en `text-down` si `< 0`; `muted` y sin flecha si es `0` o `null`. La flecha es `aria-hidden`, con un `sr-only` "Sube" o "Baja": el color no es la unica señal.
+- Debajo: "Precio al {formatQuoteTime(quote.timestamp)} (hora de Nueva York)".
+
+### `StockMetrics` (Server)
+
+`<dl>` en grilla de tarjetas: 2 columnas a 375 px, 3 en `md` y 4 en `lg`. Cada tarjeta lleva `<dt>` (`muted`, texto chico) y `<dd>` (valor). Un valor `null` se muestra como "—".
+
+| Tarjeta | Valor |
+|---|---|
+| Apertura | `formatCurrency(quote.open)` |
+| Cierre anterior | `formatCurrency(quote.previousClose)` |
+| Máximo del día | `formatCurrency(quote.high)` |
+| Mínimo del día | `formatCurrency(quote.low)` |
+| Capitalización | `formatMarketCap(profile?.marketCapMillions ?? metrics?.marketCapMillions)` |
+| P/E (TTM) | `formatNumber(metrics?.peRatio)` |
+| Beta | `formatNumber(metrics?.beta)` |
+| Máximo 52 semanas | `formatCurrency(metrics?.week52High)` |
+| Mínimo 52 semanas | `formatCurrency(metrics?.week52Low)` |
+| Rend. dividendo | `formatPercent(metrics?.dividendYieldPercent)` |
+
+Bloque "Empresa" debajo: Sector (`industry`), País, Bolsa y Sitio web. El sitio web es un enlace con `target="_blank" rel="noopener noreferrer"` y muestra el hostname sin `www.`.
+
+### `StockTabs` (Server)
+
+- `<div role="tablist" aria-label="Secciones del stock">` con tres `<button role="tab">`:
+  - "Resumen": `id="tab-resumen"`, `aria-selected="true"` y `aria-controls="panel-resumen"`.
+  - "Técnico" y "Noticias": `aria-selected="false"`, `disabled` y `aria-disabled="true"`, cada uno con el badge "Próximamente" (mismo estilo que el sidebar de F00).
+- `<div role="tabpanel" id="panel-resumen" aria-labelledby="tab-resumen">{children}</div>`.
+- **Ganchos F05/F08:** habilitan su pestaña y convierten el componente en Client.
+
+### `PriceChart` (`"use client"`)
+
+- Props: `{ symbol: string }`. Estado: `range` (`DEFAULT_RANGE`) y `status` (`"loading" | "ready" | "empty" | "error"`).
+- **Selector:** `<div role="group" aria-label="Rango de la gráfica">` con un boton por `STOCK_RANGES` (`1M`, `6M`, `1A`, `5A`) y `aria-pressed` en el activo (estilo de seleccion con `accent-soft`).
+- **Contenedor:** un `<div>` siempre montado (alto fijo `h-72 md:h-96`) con `role="img"` y `aria-label="Gráfica de velas de {S}, {rango largo}"`. Los estados se pintan encima, en el mismo alto, y el canvas se oculta con `invisible` mientras no hay datos.
+- **Ciclo de vida** (un `useEffect` al montar):
+  1. `const { createChart, CandlestickSeries, HistogramSeries, ColorType } = await import("lightweight-charts")`. Si el componente se desmonto mientras tanto (flag `cancelled`), no crea nada.
+  2. `createChart(el, { autoSize: true, ...theme })`.
+  3. `chart.addSeries(CandlestickSeries, { upColor, downColor, wickUpColor, wickDownColor, borderVisible: false })`.
+  4. `chart.addSeries(HistogramSeries, { priceScaleId: "", priceFormat: { type: "volume" } })` con `priceScale().applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } })`, para que el volumen quede abajo.
+  5. Cleanup: `chart.remove()`.
+- **Datos:** `api.stockHistory` → `candles`, ya ascendentes y sin repetidos (los garantiza el API). Se mapean asi:
+  - Velas: `{ time: c.date, open, high, low, close }`. `time` va como string `"YYYY-MM-DD"` (business day de lightweight-charts), sin convertir a timestamp.
+  - Volumen: solo las velas con `volume !== null` → `{ time: c.date, value: c.volume, color }`, donde `color` es `up` o `down` con 40 % de opacidad segun `close >= open`.
+  - Luego `setData(...)` en las dos series y `chart.timeScale().fitContent()`.
+- **Tema:** el tema de F00 es solo `prefers-color-scheme` (no hay toggle manual).
+  - `readChartTheme()` lee `--surface`, `--muted`, `--border`, `--up` y `--down` con `getComputedStyle(document.documentElement)`.
+  - Los convierte a `rgb()` pintandolos en un canvas 2D de 1×1 (`fillStyle` + `getImageData`). Los tokens estan en `oklch` y no se debe depender de que la libreria lo parsee. Si no hay contexto 2D (jsdom), se usa el valor crudo.
+  - Se aplican asi: `layout.background` = `{ type: ColorType.Solid, color: surface }`, `layout.textColor` = `muted`, `grid.vertLines`/`horzLines` = `border`, velas y volumen con `up`/`down`.
+  - Un listener de `matchMedia("(prefers-color-scheme: dark)")` `change` vuelve a leer el tema y llama `chart.applyOptions` y `series.applyOptions`; se quita en el cleanup.
+  - `layout.attributionLogo` se deja en su valor por defecto: la licencia de lightweight-charts pide atribuir a TradingView.
+- **Estados:** loading → `LoadingState` con la etiqueta "Cargando gráfica…"; `[]` → `EmptyState` con "No hay histórico para este rango."; error → `ErrorState` con `errorMessage(err)` y un boton "Reintentar" que repite el rango actual.
+
+### `lib/stocks.ts`
+
+```ts
+// Mismo formato que symbolSchema del API (02-backend, F03).
+export const SYMBOL_PATTERN = /^[A-Z]{1,5}(\.[A-Z])?$/;
+export function normalizeSymbol(raw: string): string | null; // trim + toUpperCase; null si no cumple el patron
+
+export type StockRange = "1M" | "6M" | "1Y" | "5Y";
+export const STOCK_RANGES: readonly { value: StockRange; label: string; long: string }[] = [
+  { value: "1M", label: "1M", long: "1 mes" },
+  { value: "6M", label: "6M", long: "6 meses" },
+  { value: "1Y", label: "1A", long: "1 año" },
+  { value: "5Y", label: "5A", long: "5 años" },
+];
+export const DEFAULT_RANGE: StockRange = "6M";
+```
+
+### `lib/format.ts`
+
+Locale `es-MX`: la UI esta en español y usa punto decimal y coma de miles, igual que las cotizaciones de US. Valores verificados con `Intl` en Node 24:
+
+| Funcion | Entrada → salida |
+|---|---|
+| `formatCurrency(v, currency = "USD")` | `189.84` → `"$189.84"`; `1234567.891` → `"$1,234,567.89"` (`style: "currency"`, `currencyDisplay: "narrowSymbol"`) |
+| `formatChange(v)` | `2.31` → `"+2.31"`; `-1.05` → `"-1.05"`; `0` → `"0.00"` (`signDisplay: "exceptZero"`, 2 decimales) |
+| `formatPercent(points, { signed })` | recibe puntos porcentuales: `1.23` con `signed` → `"+1.23%"`; `-0.45` → `"-0.45%"`; `0.51` sin `signed` → `"0.51%"` (`style: "percent"` sobre `points / 100`) |
+| `formatMarketCap(millions)` | `2_950_000` → `"2.95 T"`; `3_400` → `"3.4 B"`; `812` → `"812 M"`. Umbrales: ≥ 1 000 000 M → T, ≥ 1 000 M → B, si no M. Numero con `es-MX` y maximo 2 decimales. |
+| `formatNumber(v)` | P/E y beta: `29.4` → `"29.40"` (2 decimales) |
+| `formatQuoteTime(unixSeconds)` | `"18 nov 2026, 1:33 p.m."` (`dateStyle: "medium"`, `timeStyle: "short"`, `timeZone: "America/New_York"`) |
+
+- `null` o `undefined` → `"—"` en todas.
+- No se usa `notation: "compact"`: en `es-MX` produce `"2.95 B"` (billón español) y `"3400 M"`, que confunden.
+- Las fechas van en la zona horaria del mercado y no en la del navegador: los Server Components formatean en el servidor (UTC en Vercel), y asi la salida es determinista.
+
+### `lib/api.ts`
+
+```ts
+const quoteSchema = z.object({ symbol: z.string(), price: z.number(), change: z.number().nullable(),
+  changePercent: z.number().nullable(), high: z.number(), low: z.number(), open: z.number(),
+  previousClose: z.number(), timestamp: z.number() });
+const profileSchema = z.object({ symbol: z.string(), name: z.string(), logoUrl: z.string().nullable(),
+  industry: z.string().nullable(), country: z.string().nullable(), website: z.string().nullable(),
+  exchange: z.string().nullable(), currency: z.string().nullable(), marketCapMillions: z.number().nullable() });
+const metricsSchema = z.object({ peRatio: z.number().nullable(), beta: z.number().nullable(),
+  week52High: z.number().nullable(), week52Low: z.number().nullable(),
+  dividendYieldPercent: z.number().nullable(), marketCapMillions: z.number().nullable() });
+
+const stockSearchSchema = z.object({ query: z.string(), results: z.array(z.object({
+  symbol: z.string(), name: z.string(), type: z.enum(["stock", "etf"]) })) });
+const stockDetailSchema = z.object({ symbol: z.string(), quote: quoteSchema,
+  profile: profileSchema.nullable(), metrics: metricsSchema.nullable() });
+const candleSchema = z.object({ date: z.string(), open: z.number(), high: z.number(), low: z.number(),
+  close: z.number(), volume: z.number().nullable() });
+const stockHistorySchema = z.object({ symbol: z.string(), range: z.enum(["1M", "6M", "1Y", "5Y"]),
+  interval: z.enum(["1day", "1week"]), candles: z.array(candleSchema) });
+
+export type StockSearchResult = z.infer<typeof stockSearchSchema>["results"][number];
+export type StockDetail = z.infer<typeof stockDetailSchema>;
+export type Candle = z.infer<typeof candleSchema>;
+
+// en `api`:
+searchStocks: (q: string, opts?: RequestOptions) =>
+  request(`/stocks/search?${new URLSearchParams({ q })}`, stockSearchSchema, opts),
+stock: (symbol: string, opts?: RequestOptions) =>
+  request(`/stocks/${encodeURIComponent(symbol)}`, stockDetailSchema, opts),
+stockHistory: (symbol: string, range: StockRange, opts?: RequestOptions) =>
+  request(`/stocks/${encodeURIComponent(symbol)}/history?range=${range}`, stockHistorySchema, opts),
+```
+
+`errorMessage` agrega `SYMBOL_NOT_FOUND` → "No encontramos ese símbolo.".
+
+### Tests (Vitest, sin red ni Supabase real)
+
+Mocks: `@/lib/api` (espiar `api.*`), `@/lib/supabase/server` (`getServerAccessToken`), `@/lib/supabase/client` (`getBrowserAccessToken`), `next/navigation` (`useRouter` → `{ push: vi.fn() }`), `next/form` (renderiza un `<form>` con `action`) y `lightweight-charts`. Este ultimo es un fake de `createChart` que devuelve `{ addSeries → { setData, applyOptions, priceScale }, applyOptions, timeScale → { fitContent }, remove }`. `vi.mock` tambien intercepta el `import()` dinamico.
+
+| Archivo | Casos |
+|---|---|
+| `lib/format.test.ts` | Cada fila de la tabla de formatos, incluido `null` → `"—"` y los tres umbrales de `formatMarketCap`. |
+| `lib/stocks.test.ts` | `"aapl"` → `"AAPL"`; `" brk.b "` → `"BRK.B"`; `"AAPL1"`, `"TOOLONG"`, `"AAPL.MX"`, `"BRK-B"` y `""` → `null`. `STOCK_RANGES` tiene 4 rangos y `DEFAULT_RANGE` es `"6M"`. |
+| `lib/api.test.ts` (actualizar) | `searchStocks("s&p")` pide `/stocks/search?q=s%26p` con `Authorization`; `stock("BRK.B")` pide `/stocks/BRK.B`; `stockHistory("AAPL", "1Y")` pide `/stocks/AAPL/history?range=1Y`. Los tres parsean el shape de 02-backend, y un `type` desconocido → `INVALID_RESPONSE`. `errorMessage` de `SYMBOL_NOT_FOUND`. |
+| `components/stocks/HeaderSearch.test.tsx` | Con fake timers: escribir "a", "ap", "app" seguido → ninguna llamada antes de 300 ms y una sola con `"app"` despues. Espacios solos → sin llamada. Los resultados se ven como `option` con "Acción"/"ETF" y `aria-expanded="true"`. ArrowDown + Enter → `push("/stocks/AAPL")` y el input se vacia. Clic en una opcion → `push`. El form tiene `action="/search"` y el input `name="q"`. Escape → `aria-expanded="false"`. `[]` → "Sin resultados". `ApiError` `PROVIDER_RATE_LIMITED` → su mensaje. Una tecla nueva aborta la peticion anterior (`signal.aborted`). |
+| `components/stocks/SearchResults.test.tsx` | `await SearchResults({ searchParams: Promise.resolve({ q: "apple" }) })`: enlaces a `/stocks/AAPL` con nombre y badges "Acción"/"ETF". Sin `q` → `EmptyState` "Busca una empresa o ETF" y sin llamada al API. `q: ["a", "b"]` → busca `"a"`. `[]` → "Sin resultados para «zzz»". `ApiError` → `role="alert"`. El input tiene `defaultValue` igual a `q`. |
+| `components/stocks/StockOverview.test.tsx` | (`PriceChart` mockeado) `params` `{ symbol: "aapl" }` → `api.stock("AAPL", { token })`. Se ven `h1` "Apple Inc", "$189.84" y "+2.31 (+1.23%)" con la clase `text-up` y "Sube" para lectores. Un cambio negativo → `text-down` y "Baja". Las tarjetas muestran "2.95 T" y "0.51%". `profile: null` → `h1` con el simbolo y "—" en sector y capitalizacion (la capitalizacion sale de metrics si existe). Existe `[data-slot="favorite"]`. Las pestañas Técnico y Noticias estan `disabled` con "Próximamente" y Resumen tiene `aria-selected="true"`. 404 `SYMBOL_NOT_FOUND` → "No encontramos el símbolo ZZZZZ" con un enlace a `/search?q=ZZZZZ`. `"AAPL1"` → el mismo estado sin llamar al API. `PROVIDER_ERROR` → `role="alert"`. |
+| `components/stocks/PriceChart.test.tsx` | Al montar: `getBrowserAccessToken` y `stockHistory("AAPL", "6M", { token, signal })` una vez. `setData` de velas con `{ time: "2026-05-19", open, high, low, close }` y de volumen sin las velas con `volume: null`. `fitContent` llamado. Clic en "1A" → llamada con `"1Y"` y `aria-pressed="true"`. Volver a "6M" → sin llamada nueva. Cambiar de rango con una peticion pendiente → la anterior queda abortada y su respuesta no pinta. `[]` → "No hay histórico para este rango.". Error → `role="alert"`, y "Reintentar" vuelve a pedir. El evento `change` del `matchMedia` mockeado → `chart.applyOptions` llamado de nuevo. Al desmontar → `remove()`. |
+| `components/layout/SidebarLinks.test.tsx` (actualizar) | "Buscar" es un enlace a `/search` con `aria-current="page"` en `/search`. En `/stocks/AAPL` sigue sin item activo. |
+| `app/(app)/stocks/[symbol]/page.test.tsx` | `generateMetadata({ params: Promise.resolve({ symbol: "nvda" }) })` → titulo `"NVDA · Stock Insights"`; con un simbolo invalido → `"Stock · Stock Insights"`; no llama al API. |
+
+### Criterios de aceptacion
+
+- [ ] `pnpm --filter web build`, `lint` y `test` pasan sin Supabase real. El build no falla por acceso a `params`/`searchParams` fuera de `<Suspense>`.
+- [ ] El HTML de `/stocks/AAPL` (ver codigo fuente) ya trae el precio y las metricas. La grafica llega despues.
+- [ ] `lightweight-charts` no aparece en el bundle del servidor ni en el chunk inicial (solo en el `import()` del `useEffect`).
+- [ ] La grafica respeta el modo claro y oscuro, y cambia al alternar el tema del sistema sin recargar.
+- [ ] Ningun `fetch` al API fuera de `lib/api.ts`.
+- [ ] A 375 px: el header con el buscador, `/search` y `/stocks/[symbol]` sin scroll horizontal; las metricas en 2 columnas.
+
+### Pasos manuales pendientes
+
+Anotar en `PRUEBAS-MANUALES.md` (en local y en la app desplegada):
+
+1. En el header escribir "apple": tras una pausa breve aparecen sugerencias con AAPL y el tipo "Acción". Con flechas + Enter se abre `/stocks/AAPL`.
+2. Escribir "spy" y pulsar Enter sin elegir → `/search?q=spy`, solo con SPY marcado como "ETF". "Buscar" esta resaltado en el sidebar.
+3. Buscar "berkshire" → aparece BRK.A o BRK.B y su enlace abre la ficha. Buscar "baba" → BABA aparece una sola vez, como "Acción".
+4. Abrir `/search` sin `q` → buscador vacio y la invitacion a buscar.
+5. En `/stocks/AAPL`:
+   - Precio, cambio en verde o rojo con flecha, y la hora de Nueva York.
+   - Tarjetas con valores (capitalizacion tipo "2.95 T").
+   - Pestañas Técnico y Noticias deshabilitadas con "Próximamente".
+6. Grafica: carga en 6M. Cambiar a 1M, 1A y 5A actualiza las velas (5A con velas semanales). En DevTools > Network, volver a un rango ya visto no hace una peticion nueva y no hay errores de CORS.
+7. `/stocks/zzzzz` → "No encontramos el símbolo ZZZZZ" con el enlace a Buscar. `/stocks/aapl` (minusculas) funciona.
+8. Cambiar el tema del sistema a oscuro con la ficha abierta: la grafica cambia de colores sin recargar.
+9. A 375 px y solo con teclado (Tab, flechas, Enter, Escape): todo es usable, el foco es visible y no hay scroll horizontal.

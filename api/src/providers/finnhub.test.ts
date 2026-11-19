@@ -33,12 +33,13 @@ describe("finnhub provider", () => {
     fetchMock.mockReset();
   });
 
-  it("search maps results and authenticates by header", async () => {
+  it("search filters to US and authenticates by header", async () => {
     respond({ count: 1, result: [{ description: "APPLE INC", displaySymbol: "AAPL", symbol: "AAPL", type: "Common Stock" }] });
     await expect(finnhub.search("apple")).resolves.toEqual([{ symbol: "AAPL", name: "APPLE INC", type: "Common Stock" }]);
     const { url, headers } = requested();
     expect(url.origin + url.pathname).toBe("https://finnhub.io/api/v1/search");
     expect(url.searchParams.get("q")).toBe("apple");
+    expect(url.searchParams.get("exchange")).toBe("US");
     expect(url.searchParams.has("token")).toBe(false);
     expect(headers["X-Finnhub-Token"]).toBe("fh-key");
   });

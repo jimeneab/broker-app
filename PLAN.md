@@ -13,7 +13,7 @@ App web para ver informacion financiera de la bolsa (US), con experiencia person
 | F00 | Base: Supabase, providers, cache, layout | Dia 1 | — | ready |
 | F01 | Login con JWT | Dia 1 | F00 | ready |
 | F02 | Formulario de perfil de riesgo (onboarding) | Dia 1 | F01 | ready |
-| F03 | Busqueda y detalle de stock | Dia 1 | F00, F01 | pending |
+| F03 | Busqueda y detalle de stock | Dia 1 | F00, F01 | ready |
 | F04 | Favoritos | Dia 1 | F03 | pending |
 | F05 | Noticias | Dia 1 | F03 | pending |
 | F06 | Home | Dia 1 | F04, F05 | pending |

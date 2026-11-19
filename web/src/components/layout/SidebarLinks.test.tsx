@@ -31,8 +31,14 @@ describe("SidebarLinks", () => {
     }
   });
 
-  it("in F00 only Home is available", () => {
-    expect(navItems.filter((item) => item.available).map((item) => item.href)).toEqual(["/"]);
+  it("since F03 Home and Buscar are available", () => {
+    expect(navItems.filter((item) => item.available).map((item) => item.href)).toEqual(["/", "/search"]);
+  });
+
+  it("marks Buscar as current on /search", () => {
+    renderAt("/search");
+    expect(screen.getByRole("link", { name: "Buscar" })).toHaveProperty("pathname", "/search");
+    expect(currentLinks().map((link) => link.textContent)).toEqual(["Buscar"]);
   });
 
   it("marks Home as current only on '/' exactly", () => {

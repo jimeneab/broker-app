@@ -97,3 +97,24 @@
 **F02 — implementer:** en `testing`. api 111 tests (incluye 22 casos SQL con PGlite sobre las migraciones reales: limites 6/11/12/18/19/24, rehacer conserva onboarded_at, aislamiento, 8 respuestas invalidas, anon sin execute, update directo → 42501), web 99 tests; lint/build OK; dev: PUT sin token 401, JSON mal formado 400.
 
 **F02 — reviewer:** `ready` sin hallazgos bloqueantes. Observaciones: foco del h2 al montar en dev por StrictMode; h2 enfocado sin outline. Leader aplico la migracion F02 y probo E2E contra Supabase real con usuario temporal (borrado): PUT 12 pts → moderado; rehacer 23 → agresivo conservando onboarded_at; respuestas invalidas 400; rpc como anon 401/42501; rpc con argumento extra `risk_score` → 404 PGRST202 (no existe esa firma); PATCH directo de risk_score 403/42501.
+
+### 10. Deploy de F00–F02
+> procedamos con los pasos del 1 al 4
+
+**Outcome:** 7 variables cargadas en Vercel como `encrypted` (production + preview) leyendo los `.env` locales sin imprimir valores. Escaneo de los 97 archivos staged: 0 valores secretos. Commit `23d905a` y push a `main`; ambos deploys READY (auto-deploy por git verificado). Produccion: `/health` 200, `/me` sin token 401, JSON malo 400, web `/` → 307 `/login`, `/login` y `/signup` 200. E2E contra el API de produccion con usuario temporal (borrado): `GET /me` 200 y `PUT /me/risk-profile` 200 (8 pts → conservador).
+
+## Follow-ups (estado)
+- [x] Llenar PLAN.md con las features.
+- [x] Reemplazar los placeholders de los agentes por `PLAN.md`.
+- [ ] Dueno: Site URL en Supabase = https://broker-app-web-nine.vercel.app
+- [ ] Dueno: pruebas manuales en navegador (375 px, modo oscuro, flujo signup → cuestionario → home).
+- [ ] Siguiente: F03 (busqueda y detalle de stock).
+
+### 11. Spec de F03
+> sigamos con F03 por favor
+
+**Outcome:** spec_author escribio F03. Leader verifico con la key real de Finnhub: `search` con `exchange=US` elimina simbolos extranjeros y conserva `BRK.A`; tipos reales `Common Stock`, `ETP` (ETFs), `ADR`; duplicados posibles (BABA ADR + Common Stock). Decision del dueno: ADRs incluidos y mostrados como "Accion". La spec se actualizo para usar `exchange=US` y aceptar clases con punto.
+
+**F03 — implementer:** en `testing`. api 155 tests, web 157; lint/build OK. Llamadas reales con usuario temporal (borrado): search apple incluye AAPL; `/stocks/AAPL` 200 con quote/profile/metrics; history 6M 128 velas ascendentes; ZZZZZ 404; sin token 401; web sin sesion → `/login`. `lightweight-charts` 5.3.0 coincide con la spec. Pendiente: proceso ajeno en el puerto 4000 (PID 19284) que el agente no tuvo permiso de detener; lo decide el dueno.
+
+**F03 — reviewer:** `ready` sin hallazgos bloqueantes (API probado en el puerto 4001 para no tocar el proceso ajeno del 4000). Verificado con datos reales: berkshire → BRK.A; baba una vez como stock; spy → SPY etf sin bolsas extranjeras; simbolos invalidos 400; una sola serie diaria cacheada por simbolo; HTML SSR de `/stocks/AAPL` con precio, market cap "5.11 T" y "Sube". Leader aclaro en 01-product el criterio de "spy" (pueden aparecer acciones US por nombre) y sincronizo estatus de specs.

@@ -9,7 +9,7 @@ export type NavItem = {
 
 export const navItems: NavItem[] = [
   { href: "/", label: "Home", icon: "M3.5 10.5 12 3.5l8.5 7V20a.5.5 0 0 1-.5.5h-5v-6h-6v6H4a.5.5 0 0 1-.5-.5z", available: true },
-  { href: "/search", label: "Buscar", icon: "M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zm9.5 2.5-4.5-4.5", available: false },
+  { href: "/search", label: "Buscar", icon: "M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zm9.5 2.5-4.5-4.5", available: true },
   {
     href: "/favorites",
     label: "Favoritos",
