@@ -234,3 +234,20 @@ En local y en la app desplegada, con sesion y onboarding hecho:
 7. `/stocks/AAPL`: el triangulo y los colores del cambio se ven igual que antes de F06.
 8. A 375 px y solo con teclado: todo usable, foco visible, sin scroll horizontal, mercado e ideas en 1 columna; repetir en modo oscuro.
 9. Ver codigo fuente de `/`: el HTML inicial ya trae el buscador, Populares y Próximamente aunque el API tarde.
+
+## F16 — Pagina de busqueda enriquecida
+
+En local y en la app desplegada, con sesion:
+
+1. Abrir `/search` sin `q` con el almacenamiento del sitio limpio (DevTools > Application > Local Storage): buscador, la linea "Busca por nombre (Apple) o por símbolo (AAPL). Solo acciones y ETFs de EE. UU.", "Populares", "Índices de referencia" (SPY, QQQ, DIA) y "Explorar por sector". No aparece "Vistos recientemente" ni "Busca una empresa o ETF".
+2. Abrir `/stocks/AAPL`, luego `/stocks/NVDA`, luego `/stocks/AAPL` y volver a `/search`: "Vistos recientemente" muestra AAPL, NVDA en ese orden. En Local Storage, `si:recent-symbols` vale `["AAPL","NVDA"]`.
+3. Abrir `/stocks/ZZZZZ` y volver a `/search`: ZZZZZ no aparece en recientes.
+4. Abrir 9 fichas distintas: solo quedan las ultimas 8, la mas reciente primero.
+5. Pulsar "Borrar" (con teclado: Tab + Enter): el bloque desaparece y el foco queda en el buscador. Recargar: sigue sin aparecer.
+6. En Local Storage poner `si:recent-symbols` = `hola` y recargar `/search`: la pagina carga sin el bloque y sin errores en la consola.
+7. Buscar "apple": se ven la linea de ayuda y los resultados como antes, sin recientes, populares, indices ni sectores.
+8. "Explorar por sector": 6 tarjetas (Tecnología, Finanzas, Salud, Consumo, Energía, ETFs); cada fila abre su ficha; los ETFs dicen "ETF" y el resto "Acción"; debajo la nota "Lista de ejemplo para explorar; no es recomendación de inversión.". En DevTools > Network no hay peticiones al API por este bloque.
+9. Abrir `/`: el bloque sigue diciendo "Mercado hoy".
+10. Con el API apagado: `/search` carga, las tarjetas de indices dicen "No disponible" y recientes, populares y sectores funcionan.
+11. A 375 px y en escritorio, modo claro y oscuro, solo con teclado: sin scroll horizontal, foco visible, sectores en 1 y 2 columnas.
+12. Con recientes guardados, abrir `/search` y revisar la consola: sin errores de hidratacion. Ver codigo fuente: el HTML trae la linea de ayuda, "Populares" y "Explorar por sector", pero no "Vistos recientemente".

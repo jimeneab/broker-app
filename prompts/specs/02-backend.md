@@ -1023,7 +1023,7 @@ Anotar en `PRUEBAS-MANUALES.md`:
 
 ## F06 — Home
 
-**Estatus:** in_progress
+**Estatus:** ready
 
 ### Decision: sin endpoint nuevo
 
@@ -1056,7 +1056,7 @@ Ninguno nuevo en `api/`: no hay codigo nuevo. Los casos de `GET /stocks/:symbol`
 
 ## F15 — Documentacion OpenAPI (Swagger) del API
 
-**Estatus:** in_progress
+**Estatus:** ready
 
 ### Requisitos
 
@@ -1155,3 +1155,18 @@ Anotar en `PRUEBAS-MANUALES.md`:
 3. En `/docs`, "Try it out" en `GET /stocks/search` con `q=apple` sin autorizar → `401 UNAUTHORIZED`.
 4. "Authorize" → pegar un `access_token` real (sin el prefijo `Bearer`) → "Try it out" en `GET /stocks/search` con `q=apple` → `200` con AAPL. Probar tambien `GET /me` y `GET /stocks/{symbol}` con `AAPL`.
 5. Repetir 1 y 4 en el API desplegado (`https://<api>.vercel.app/docs`).
+
+---
+
+## F16 — Pagina de busqueda enriquecida
+
+**Estatus:** ready
+
+F16 NO agrega rutas, services, migraciones ni cambios en `openapi.ts`:
+
+- "Índices de referencia" reutiliza `GET /stocks/:symbol` (F03) con SPY, QQQ y DIA, los mismos simbolos de "Mercado hoy" (F06). Las keys de cache (`finnhub:quote:{S}`, `finnhub:profile:{S}`, `finnhub:metrics:{S}`) son las mismas, asi que una visita a `/search` despues de la Home dentro de 60 s no llama a Finnhub, y despues de 60 s solo pide 3 quotes. Peor caso sin cache: 9 llamadas a Finnhub, 0 a Twelve Data.
+- "Explorar por sector" es un catalogo estatico en el web (`lib/sectors.ts`): 0 llamadas.
+- "Vistos recientemente" vive en el `localStorage` del navegador: 0 llamadas y nada en Supabase.
+- `/search?q=` sigue llamando solo a `GET /stocks/search`, como en F03.
+
+Tests: ninguno nuevo en `api/`.

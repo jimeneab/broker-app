@@ -17,4 +17,11 @@ describe("MarketToday", () => {
     expect(cards.map((c) => c.dataset.symbol)).toEqual(["SPY", "QQQ", "DIA"]);
     expect(cards.map((c) => c.dataset.name)).toEqual(["S&P 500", "Nasdaq 100", "Dow Jones"]);
   });
+
+  it("accepts a custom title", () => {
+    render(<MarketToday title="Índices de referencia" />);
+    expect(screen.getByRole("heading", { level: 2, name: "Índices de referencia" })).toBeDefined();
+    expect(screen.getByRole("region", { name: "Índices de referencia" })).toBeDefined();
+    expect(screen.getAllByTestId("quote-card").map((c) => c.dataset.symbol)).toEqual(["SPY", "QQQ", "DIA"]);
+  });
 });

@@ -271,3 +271,25 @@
 - Detector de impeccable sobre los archivos nuevos: sin hallazgos.
 - Pendiente: verificacion visual con sesion (375 px, claro/oscuro, teclado) y en el despliegue. Queda en PRUEBAS-MANUALES. No se hizo commit.
 - **Correccion tras `rejected` (reviewer):** `Greeting` ocultaba badge, descripcion, puntaje y "Rehacer cuestionario" cuando `displayName` venia vacio. El dueño solo quiere el "Hola" pelado cuando `/me` falla. Ahora `profile` depende solo de `riskProfile`; con nombre vacio solo cambia el `h1` ("Hola", sin coma). Se quito el comentario que lo justificaba, el caso `displayName: ""` de `Greeting.test.tsx` verifica badge, descripcion, puntaje y enlace, y `QuoteCard.test.tsx` verifica tambien `height` del logo. Se actualizo el requisito 3 y la fila de tests de F06 en `03-frontend.md`. lint, test (33 archivos / 186 tests) y build sin errores.
+
+## F16 — Pagina de busqueda enriquecida (2026-11-20) → `testing`
+
+### Que se implemento
+- `lib/recent.ts` (`RECENT_KEY`, `RECENT_MAX`, `addRecent`, `parseRecent`, puras) y `lib/sectors.ts` (`SECTORS`: 6 sectores, 28 filas).
+- `components/stocks/`: `TrackRecentSymbol` ("use client", render `null`, guarda el simbolo en `useEffect`), `RecentSymbols` ("use client", chips desde `localStorage` + "Borrar"), `SectorExplorer` (Server sincrono, sin API) y `SearchDiscovery` (Server: recientes, populares, indices, sectores).
+- `SearchResults`: exporta `SearchHint` y la monta siempre bajo `SearchForm`; sin `q` el cuerpo es `<SearchDiscovery />` (se quito el `EmptyState` "Busca una empresa o ETF"). El fallback de `search/page.tsx` monta tambien `SearchHint`.
+- `MarketToday` acepta `title` (por defecto "Mercado hoy"). `PopularSymbols` exporta `SYMBOL_CHIP_CLASS`. `StockOverview` monta `TrackRecentSymbol` solo en el camino feliz.
+- Tests nuevos: `lib/recent.test.ts`, `lib/sectors.test.ts`, `RecentSymbols.test.tsx`, `TrackRecentSymbol.test.tsx`, `SectorExplorer.test.tsx`, `SearchDiscovery.test.tsx`. Actualizados: `SearchResults.test.tsx`, `MarketToday.test.tsx`, `StockOverview.test.tsx`. `app/(app)/page.test.tsx` (Home) sin cambios y en verde.
+
+### Decisiones
+- **Diseño (skill impeccable, modo Operate):** extension del sistema F00–F06 sin tokens nuevos. Recientes reutiliza la clase de chip de Populares (`SYMBOL_CHIP_CLASS`) para que no diverjan; las filas de sectores copian la clase de fila de `ResultList` y `TypeBadge`; tarjetas `rounded-lg border-border bg-surface` como en F06; nota y ayuda en `text-sm text-muted`.
+- **Sin `<details>`** en sectores: tarjetas abiertas con `h3` real (accesible en navegacion por encabezados).
+- La clase de fila se duplica en `SectorExplorer` en vez de importarla de `SearchResults`, porque ese modulo importa `@/lib/api` y el spec prohibe que `SectorExplorer` lo importe.
+- `RecentSymbols` usa el `eslint-disable-next-line react-hooks/set-state-in-effect` previsto en el spec (lee `localStorage` solo despues de hidratar; primer render `null`, sin errores de hidratacion).
+- Sin dependencias ni variables de entorno nuevas, sin `"use cache"`, sin cambios en `api/`.
+
+### Como quedo
+- `pnpm --filter web lint`, `test` (39 archivos / 211 tests) y `build` sin errores. Build: `/search` con prerender parcial (◐).
+- `pnpm dev:web`: `GET /search` sin sesion → 307 a `/login`. El proceso iniciado se detuvo y el puerto 3000 quedo libre.
+- Detector de impeccable sobre los archivos nuevos/cambiados: sin hallazgos.
+- Pendiente: verificacion visual con sesion (375 px, claro/oscuro, teclado, hidratacion) y en el despliegue. Queda en PRUEBAS-MANUALES. No se hizo commit.

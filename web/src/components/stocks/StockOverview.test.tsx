@@ -4,6 +4,9 @@ import { ApiError, type StockDetail } from "@/lib/api";
 import { StockOverview } from "./StockOverview";
 
 vi.mock("./PriceChart", () => ({ PriceChart: ({ symbol }: { symbol: string }) => <div data-testid="chart">{symbol}</div> }));
+vi.mock("./TrackRecentSymbol", () => ({
+  TrackRecentSymbol: ({ symbol }: { symbol: string }) => <div data-testid="track" data-symbol={symbol} />,
+}));
 vi.mock("@/lib/supabase/server", () => ({ getServerAccessToken: vi.fn(async () => "jwt") }));
 const stock = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -70,6 +73,7 @@ describe("StockOverview", () => {
     expect(screen.getByRole("link", { name: "apple.com" }).getAttribute("target")).toBe("_blank");
     expect(document.querySelector('[data-slot="favorite"]')).not.toBeNull();
     expect(screen.getByTestId("chart").textContent).toBe("AAPL");
+    expect(screen.getByTestId("track").dataset.symbol).toBe("AAPL");
   });
 
   it("colors a negative change as down", async () => {
@@ -110,17 +114,20 @@ describe("StockOverview", () => {
     await renderSymbol("zzzzz");
     expect(screen.getByText("No encontramos el símbolo ZZZZZ")).toBeDefined();
     expect(screen.getByRole("link", { name: "Buscar «ZZZZZ»" }).getAttribute("href")).toBe("/search?q=ZZZZZ");
+    expect(screen.queryByTestId("track")).toBeNull();
   });
 
   it("an invalid symbol shows the same state without calling the API", async () => {
     await renderSymbol("AAPL1");
     expect(screen.getByText("No encontramos el símbolo AAPL1")).toBeDefined();
     expect(stock).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("track")).toBeNull();
   });
 
   it("other errors show an alert", async () => {
     stock.mockRejectedValue(new ApiError(502, "PROVIDER_ERROR", "bad"));
     await renderSymbol("AAPL");
     expect(screen.getByRole("alert").textContent).toContain("El proveedor de datos no respondió correctamente.");
+    expect(screen.queryByTestId("track")).toBeNull();
   });
 });

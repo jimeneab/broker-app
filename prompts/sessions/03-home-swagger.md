@@ -29,3 +29,24 @@
 - [ ] Pruebas manuales de F06 y F15 en `PRUEBAS-MANUALES.md` (navegador, 375 px, modo oscuro, Authorize en `/docs`).
 - [ ] Cada feature nueva debe agregar sus endpoints a `api/src/docs/openapi.ts` (el test de drift lo exige).
 - [ ] Commit y deploy de F06 + F15.
+
+## Prompts (continuacion)
+### 2. Pagina de busqueda enriquecida (F16)
+> Vamos a hacer tambien esto para la pagina de busqueda:
+> 1. Buscador + linea de ayuda; quitar el EmptyState.
+> 2. Vistos recientemente (`RecentSymbols`, localStorage `si:recent-symbols`, 8 max, `TrackRecentSymbol` en StockOverview solo en exito, boton "Borrar", logica pura en `lib/recent.ts`).
+> 3. Populares.
+> 4. Indices de referencia (`MarketToday` con prop `title`).
+> 5. Explorar por sector (`SectorExplorer`, catalogo estatico en `lib/sectors.ts`, sin llamadas al API).
+
+**Outcome:** spec_author → implementer → reviewer: **ready** a la primera. Web 39 archivos / 211 tests.
+
+## Decisions (F16)
+- Los bloques reemplazan el estado vacio solo en `/search` sin `q`; con `q` todo queda como en F03. La linea de ayuda se ve siempre.
+- Sectores como tarjetas con `h3`, no `<details>` (un heading dentro de `<summary>` pierde semantica en varios lectores de pantalla).
+- `SearchDiscovery` agrupa los 4 bloques; `SYMBOL_CHIP_CLASS` compartido entre Populares y Recientes.
+- Recientes son por navegador, no por usuario: cerrar sesion no los borra (solo "Borrar").
+
+## Follow-ups (F16)
+- [ ] Pruebas manuales F16 en `PRUEBAS-MANUALES.md` (hidratacion en consola, 375 px, modo oscuro).
+- [ ] Opcional: `parseRecent` podria cortar el recorrido al llegar a 8 (solo importa con storage corrupto enorme).

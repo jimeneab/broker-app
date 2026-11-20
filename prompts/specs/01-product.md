@@ -189,7 +189,7 @@ Es el corazon del reto. El usuario busca una empresa o un ETF de US por nombre o
 1. CUANDO el usuario escribe en el buscador del encabezado, EL sistema DEBE mostrar hasta 10 sugerencias (simbolo, nombre y tipo: Acción o ETF) unos 300 ms despues de que deja de escribir, sin esperar a que pulse Enter.
 2. CUANDO el usuario elige una sugerencia (clic, o flechas y Enter), EL sistema DEBE abrir la ficha de ese stock.
 3. CUANDO el usuario pulsa Enter sin elegir una sugerencia, EL sistema DEBE abrir la pagina "Buscar" con todos los resultados de lo que escribio.
-4. CUANDO se abre "Buscar" sin texto de busqueda, EL sistema DEBE mostrar un buscador vacio con una indicacion de que escribir.
+4. CUANDO se abre "Buscar" sin texto de busqueda, EL sistema DEBE mostrar un buscador vacio con una indicacion de que escribir. (F16 reemplaza la indicacion por la linea de ayuda y los bloques de descubrimiento.)
 5. CUANDO una busqueda no tiene resultados, EL sistema DEBE decirlo ("Sin resultados para «texto»") y no mostrar una lista vacia.
 6. EL buscador DEBE mostrar solo acciones comunes, ADRs y ETFs que cotizan en US, sin repetir un mismo simbolo. Los ADRs (p. ej. TSM, BABA) se muestran como "Acción". Las clases de accion con punto (BRK.A, BRK.B) si aparecen. No muestra simbolos de otras bolsas ni otros instrumentos (warrants, preferentes, etc.).
 7. CUANDO el usuario abre la ficha de un stock, EL sistema DEBE mostrar:
@@ -227,7 +227,7 @@ Es el corazon del reto. El usuario busca una empresa o un ETF de US por nombre o
 
 ## F06 — Home
 
-**Estatus:** in_progress
+**Estatus:** ready
 
 ### Proposito
 Al entrar, el usuario ve en una sola pantalla quien es para la app (su perfil de riesgo), un buscador para ir directo a una empresa, como va el mercado hoy y algunas ideas acordes a su perfil. Reemplaza el placeholder de F00. Favoritos (F04), noticias (F05) y el carrusel personalizado (F07) no son parte de F06: solo se anuncian como "Próximamente".
@@ -275,7 +275,7 @@ Al entrar, el usuario ve en una sola pantalla quien es para la app (su perfil de
 
 ## F15 — Documentacion OpenAPI (Swagger) del API
 
-**Estatus:** in_progress
+**Estatus:** ready
 
 ### Proposito
 Que cualquier desarrollador (o el evaluador del reto) pueda ver y probar el API desde el navegador sin leer el codigo: una pagina de Swagger UI con todos los endpoints, sus parametros, respuestas y errores, y el boton "Authorize" para usar un JWT real.
@@ -302,3 +302,55 @@ Que cualquier desarrollador (o el evaluador del reto) pueda ver y probar el API 
 - [ ] Con "Authorize" y un JWT real, "Try it out" en `GET /stocks/search` responde 200.
 - [ ] `/docs` y `/openapi.json` responden sin token (test automatico).
 - [ ] Una ruta nueva sin documentar hace fallar los tests.
+
+---
+
+## F16 — Pagina de busqueda enriquecida
+
+**Estatus:** ready
+
+### Proposito
+Hoy "Buscar" sin texto es una pantalla vacia con una invitacion a escribir. F16 la convierte en un punto de partida: el usuario retoma lo que vio, abre un stock popular, ve como van los indices y explora empresas conocidas por sector, sin tener que saber que buscar. Solo cambia el web; no hay endpoints nuevos. Con texto de busqueda, la pagina sigue como en F03.
+
+### Historias de usuario
+- Como usuario, quiero saber que puedo buscar (nombre o simbolo, solo US), para no probar a ciegas.
+- Como usuario, quiero ver los ultimos stocks que abri, para volver a ellos en un clic.
+- Como usuario, quiero ver como van los indices de referencia desde "Buscar", para tener contexto sin volver a la Home.
+- Como usuario que no conoce simbolos, quiero explorar empresas conocidas por sector, para descubrir stocks sin escribir.
+
+### Requisitos
+1. CUANDO se abre "Buscar" (con o sin texto), EL sistema DEBE mostrar debajo del buscador, en gris, la linea "Busca por nombre (Apple) o por símbolo (AAPL). Solo acciones y ETFs de EE. UU."
+2. CUANDO se abre "Buscar" sin texto de busqueda, EL sistema DEBE mostrar, en este orden: buscador y linea de ayuda, "Vistos recientemente", "Populares", "Índices de referencia" y "Explorar por sector". Ya no se muestra la invitacion "Busca una empresa o ETF".
+3. CUANDO se abre "Buscar" con texto, EL sistema DEBE mostrar lo mismo que en F03 (buscador, linea de ayuda y resultados, "Sin resultados para «texto»" o el error), sin ninguno de los bloques del requisito 2.
+4. CUANDO la ficha de un stock carga bien, EL sistema DEBE recordar ese simbolo en el navegador. Si el simbolo no existe o la ficha falla, NO DEBE recordarlo.
+5. EN "Vistos recientemente", EL sistema DEBE mostrar los ultimos 8 simbolos abiertos, del mas reciente al mas antiguo, sin repetidos, como accesos con el mismo estilo que "Populares"; cada uno abre su ficha. Abrir de nuevo un simbolo lo sube al primer lugar.
+6. CUANDO el usuario pulsa "Borrar" en "Vistos recientemente", EL sistema DEBE vaciar la lista y ocultar el bloque.
+7. CUANDO no hay simbolos recientes o el navegador no permite guardarlos (modo privado, almacenamiento bloqueado o datos dañados), EL bloque "Vistos recientemente" NO DEBE mostrarse, sin mensaje de error, y el resto de la pagina se ve normal.
+8. "Populares" DEBE ser el mismo de la Home (F06): AAPL, MSFT, NVDA, TSLA, AMZN, GOOGL y SPY.
+9. EN "Índices de referencia", EL sistema DEBE mostrar las mismas 3 tarjetas que "Mercado hoy" de la Home (S&P 500/SPY, Nasdaq 100/QQQ y Dow Jones/DIA), con el mismo comportamiento: esqueleto mientras carga y "No disponible" si una falla, sin afectar a las demas. La Home sigue diciendo "Mercado hoy".
+10. EN "Explorar por sector", EL sistema DEBE mostrar 6 tarjetas, una por sector, cada una con su lista de simbolos. Cada fila muestra el simbolo, el nombre y el tipo ("Acción" o "ETF") y abre la ficha:
+    - Tecnología: AAPL Apple, MSFT Microsoft, NVDA NVIDIA, GOOGL Alphabet, META Meta Platforms.
+    - Finanzas: JPM JPMorgan Chase, V Visa, MA Mastercard, BAC Bank of America, GS Goldman Sachs.
+    - Salud: JNJ Johnson & Johnson, UNH UnitedHealth, LLY Eli Lilly, PFE Pfizer, ABBV AbbVie.
+    - Consumo: KO Coca-Cola, PG Procter & Gamble, WMT Walmart, MCD McDonald's, NKE Nike.
+    - Energía: XOM Exxon Mobil, CVX Chevron, COP ConocoPhillips.
+    - ETFs: SPY SPDR S&P 500 ETF Trust, QQQ Invesco QQQ Trust, DIA SPDR Dow Jones Industrial Average ETF Trust, VTI Vanguard Total Stock Market ETF, VOO Vanguard S&P 500 ETF.
+    Las tarjetas van en 2 columnas en escritorio y 1 en movil. Debajo, en gris: "Lista de ejemplo para explorar; no es recomendación de inversión."
+11. "Explorar por sector" NO DEBE pedir datos al API: es una lista fija, se ve de inmediato y nunca falla.
+12. CADA bloque DEBE fallar de forma independiente: una falla en recientes o en una tarjeta de indices no oculta el buscador ni los demas bloques.
+
+### Fuera de alcance (F16)
+- Guardar los recientes en la cuenta (Supabase) o sincronizarlos entre dispositivos o pestañas abiertas. Se guardan por navegador, no por usuario: cerrar sesion no los borra (lo hace "Borrar").
+- Precios en "Explorar por sector" o en "Vistos recientemente".
+- Sectores dinamicos (vienen del catalogo de F07 cuando exista) y filtros por sector en los resultados.
+- Cambios en la Home.
+
+### Criterios de aceptacion
+- [ ] `/search` sin texto muestra, en orden: buscador con la linea de ayuda, "Vistos recientemente" (si hay), "Populares", "Índices de referencia" y "Explorar por sector" con su nota.
+- [ ] `/search?q=apple` se ve como antes mas la linea de ayuda, sin los bloques (test automatico).
+- [ ] Abrir AAPL, NVDA y otra vez AAPL deja "AAPL, NVDA" en recientes; `/stocks/ZZZZZ` no se agrega (test automatico).
+- [ ] La lista guarda como maximo 8 y descarta datos dañados (test automatico).
+- [ ] "Borrar" vacia la lista y oculta el bloque; con el almacenamiento bloqueado la pagina funciona sin el bloque (test automatico).
+- [ ] La Home sigue mostrando "Mercado hoy" (test automatico).
+- [ ] "Explorar por sector" muestra los 6 sectores con sus enlaces y tipos, sin llamar al API (test automatico).
+- [ ] A 375 px no hay scroll horizontal, en modo claro y oscuro; todo se usa con teclado.

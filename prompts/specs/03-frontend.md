@@ -620,7 +620,7 @@ Cuando la migracion de F02 este aplicada (anotar en `PRUEBAS-MANUALES.md`), en l
 4. CUANDO el usuario pulsa Enter con una opcion activa (flechas) o hace clic en una opcion, EL sistema DEBE navegar a `/stocks/{SYMBOL}`, cerrar la lista y vaciar el input.
 5. CUANDO el usuario pulsa Enter sin opcion activa, EL formulario DEBE navegar a `/search?q={texto}`.
 6. CUANDO el usuario pulsa Escape o el foco sale del componente, la lista DEBE cerrarse.
-7. CUANDO se abre `/search` sin `q` (o con `q` vacio), EL sistema DEBE mostrar el buscador de la pagina vacio y un `EmptyState` que invite a buscar, sin llamar al API.
+7. CUANDO se abre `/search` sin `q` (o con `q` vacio), EL sistema DEBE mostrar el buscador de la pagina vacio y un `EmptyState` que invite a buscar, sin llamar al API. (F16 reemplaza el `EmptyState` por `SearchDiscovery`; ver F16.)
 8. CUANDO se abre `/search?q=texto`, EL sistema DEBE renderizar en el servidor el buscador con `texto` y la lista de resultados: cada uno es un enlace a `/stocks/{SYMBOL}` con simbolo, nombre y tipo. Sin resultados → `EmptyState` "Sin resultados para «texto»". Con error → `ErrorState`.
 9. CUANDO se abre `/stocks/{symbol}`, EL sistema DEBE normalizar el simbolo (`normalizeSymbol`). Si no es valido, DEBE mostrar el estado "no encontrado" sin llamar al API.
 10. CUANDO el simbolo es valido, EL sistema DEBE renderizar en el servidor, dentro de un `<Suspense>`, el encabezado (`StockHeader`), las pestañas y las metricas (`StockMetrics`) con `api.stock`. La grafica (`PriceChart`) es un Client Component que pide su historico despues de hidratar.
@@ -922,7 +922,7 @@ Anotar en `PRUEBAS-MANUALES.md` (en local y en la app desplegada):
 
 ## F06 — Home
 
-**Estatus:** in_progress
+**Estatus:** ready
 
 ### Requisitos
 
@@ -1123,6 +1123,219 @@ Anotar en `PRUEBAS-MANUALES.md` (en local y en la app desplegada, con sesion y o
 
 ## F15 — Documentacion OpenAPI (Swagger) del API
 
-**Estatus:** in_progress
+**Estatus:** ready
 
 F15 no cambia el web: `/docs` y `/openapi.json` viven en el API (ver 02-backend). El web sigue usando solo `lib/api.ts`.
+
+---
+
+## F16 — Pagina de busqueda enriquecida
+
+**Estatus:** ready
+
+### Que se ve con y sin `q` (comportamiento actual verificado en `SearchResults.tsx`)
+
+Hoy `SearchResults` siempre renderiza `SearchForm q={q}` y debajo un `body`: sin `q` → `EmptyState` "Busca una empresa o ETF"; con `q` y error → `ErrorState`; con `q` y `[]` → `EmptyState` "Sin resultados para «q»"; con resultados → "{n} resultados para «q»" + `ResultList`.
+
+| Bloque | `/search` (sin `q` o `q` vacio) | `/search?q=texto` |
+|---|---|---|
+| `SearchForm` | si (vacio) | si (con `texto`) |
+| `SearchHint` (linea de ayuda) | si | si |
+| `EmptyState` "Busca una empresa o ETF" | **se elimina** | — |
+| Resultados / "Sin resultados para «texto»" / `ErrorState` | — | si, sin cambios |
+| `SearchDiscovery` (recientes, populares, indices, sectores) | si | no |
+
+### Requisitos
+
+1. `SearchResults` DEBE renderizar `<SearchForm q={q} />` seguido de `<SearchHint />` en todos los casos. Sin `q`, el `body` DEBE ser `<SearchDiscovery />` en lugar del `EmptyState`; con `q`, el `body` no cambia.
+2. `SearchHint` DEBE ser un `<p className="text-sm text-muted">` con el texto exacto "Busca por nombre (Apple) o por símbolo (AAPL). Solo acciones y ETFs de EE. UU.". Se exporta de `SearchResults.tsx` y el fallback de `search/page.tsx` lo monta debajo de `SearchForm`, para que el texto no salte al resolver el `Suspense`. La Home (F06) no lo monta.
+3. `SearchDiscovery` DEBE componer, en orden: `<RecentSymbols />`, `<PopularSymbols />`, `<MarketToday title="Índices de referencia" />` y `<SectorExplorer />`.
+4. `MarketToday` DEBE aceptar `title?: string` (por defecto "Mercado hoy") y usarlo en su `h2`. La Home no pasa la prop y se ve igual. El `id="market-today"` del `h2` se mantiene: cada pagina monta un solo `MarketToday`, asi que el id es unico por pagina.
+5. `StockOverview` DEBE montar `<TrackRecentSymbol symbol={data.symbol} />` solo en el camino feliz (despues de que `api.stock` respondio). En `SymbolNotFound` (simbolo invalido o 404/400) y en `ErrorState` no se monta.
+6. `RecentSymbols` y `TrackRecentSymbol` DEBEN leer y escribir `localStorage` solo dentro de `useEffect` o de un handler, cada acceso en `try/catch`. El HTML del servidor y el primer render del cliente de `RecentSymbols` son `null`: sin errores de hidratacion.
+7. `SectorExplorer` NO DEBE importar `@/lib/api` ni leer la sesion: es sincrono, sin `<Suspense>`, y su HTML va en el shell.
+8. Ninguna llamada al API fuera de `lib/api.ts`; sin `"use cache"`; los unicos `"use client"` nuevos son `RecentSymbols` y `TrackRecentSymbol`.
+
+### Dependencias nuevas (`web/`)
+
+Ninguna. Variables de entorno: ninguna nueva.
+
+### Estructura de archivos
+
+```
+web/src/
+├── app/(app)/search/page.tsx            # fallback: SearchForm + SearchHint + LoadingState
+├── components/
+│   ├── home/
+│   │   └── MarketToday.tsx              # + prop title (default "Mercado hoy")
+│   └── stocks/
+│       ├── SearchResults.tsx            # + SearchHint; sin q → <SearchDiscovery/>
+│       ├── SearchDiscovery.tsx          # Server: los 4 bloques en orden
+│       ├── RecentSymbols.tsx            # "use client": chips desde localStorage + "Borrar"
+│       ├── TrackRecentSymbol.tsx        # "use client": render null, guarda el simbolo en useEffect
+│       ├── SectorExplorer.tsx           # Server sincrono: tarjetas por sector, sin API
+│       ├── PopularSymbols.tsx           # exporta SYMBOL_CHIP_CLASS (la clase de sus chips)
+│       └── StockOverview.tsx            # + <TrackRecentSymbol/> en el camino feliz
+└── lib/
+    ├── recent.ts                        # RECENT_KEY, RECENT_MAX, addRecent, parseRecent (puras)
+    └── sectors.ts                       # SECTORS (catalogo estatico)
+```
+
+### Frontera Server / Client
+
+| Componente | Tipo | Por que |
+|---|---|---|
+| `SearchDiscovery`, `SectorExplorer`, `MarketToday` | Server | Sin estado ni eventos. `SectorExplorer` es HTML estatico. |
+| `RecentSymbols` | Client | `localStorage` solo existe en el navegador y "Borrar" es un evento. |
+| `TrackRecentSymbol` | Client | Escribe `localStorage` al montar la ficha. No renderiza nada: no agrega HTML ni hidrata markup. |
+
+`SearchDiscovery` vive dentro del `<Suspense>` que ya envuelve `SearchResults` (lee `searchParams`). Las `QuoteCard` de `MarketToday` leen el token dentro de su propio `<Suspense>` (F06), asi que no hay cookies fuera de un boundary.
+
+### Composicion de `SearchDiscovery` (Server)
+
+```tsx
+export function SearchDiscovery() {
+  // <div className="flex flex-col gap-10">
+  //   <RecentSymbols />
+  //   <PopularSymbols />
+  //   <MarketToday title="Índices de referencia" />
+  //   <SectorExplorer />
+  // </div>
+}
+```
+
+Cada bloque falla solo: `RecentSymbols` atrapa todo error de storage y devuelve `null`; cada `QuoteCard` ya muestra "No disponible" (F06); `PopularSymbols` y `SectorExplorer` no tienen datos que fallen.
+
+### `lib/recent.ts` (funciones puras, sin `window`)
+
+```ts
+export const RECENT_KEY = "si:recent-symbols";
+export const RECENT_MAX = 8;
+
+/** Pone `symbol` al frente, sin duplicados, y corta a `max`. Un simbolo invalido devuelve la lista igual. */
+export function addRecent(list: readonly string[], symbol: string, max = RECENT_MAX): string[];
+
+/** JSON de localStorage → simbolos validos. Nunca lanza. */
+export function parseRecent(raw: string | null): string[];
+```
+
+- `addRecent`: `s = normalizeSymbol(symbol)`; si es `null` → `[...list]`. Si no → `[s, ...list.filter(x => x !== s)].slice(0, max)`.
+- `parseRecent`: `null` o JSON invalido → `[]`. Si lo parseado no es un arreglo → `[]`. De un arreglo se quedan solo los `string` que pasan `normalizeSymbol` (normalizados), sin duplicados (queda la primera aparicion) y cortado a `RECENT_MAX`.
+
+### `TrackRecentSymbol` (`"use client"`)
+
+```tsx
+export function TrackRecentSymbol({ symbol }: { symbol: string }) {
+  useEffect(() => {
+    try {
+      localStorage.setItem(RECENT_KEY, JSON.stringify(addRecent(parseRecent(localStorage.getItem(RECENT_KEY)), symbol)));
+    } catch {
+      // storage bloqueado o lleno: los recientes son opcionales
+    }
+  }, [symbol]);
+  return null;
+}
+```
+
+Idempotente: el doble `useEffect` de Strict Mode en desarrollo deja la misma lista.
+
+### `RecentSymbols` (`"use client"`)
+
+- Estado `symbols: string[]`, inicial `[]`. En `useEffect(() => …, [])`: `try { setSymbols(parseRecent(localStorage.getItem(RECENT_KEY))) } catch {}`. Si la regla `react-hooks/set-state-in-effect` lo marca, se permite un `eslint-disable-next-line` con el motivo "lee un sistema externo (localStorage) solo despues de hidratar".
+- `symbols.length === 0` → `return null`.
+- Markup, con la misma forma que `PopularSymbols`:
+  - `<nav aria-label="Vistos recientemente" className="flex flex-wrap items-center gap-x-3 gap-y-2">`.
+  - `<span className="text-sm text-muted">Vistos recientemente</span>`.
+  - `<ul className="flex flex-wrap gap-2">` con un `<Link href={\`/stocks/${s}\`} className={SYMBOL_CHIP_CLASS}>` por simbolo.
+  - `<button type="button" aria-label="Borrar vistos recientemente" className="text-sm text-muted underline-offset-2 hover:underline">Borrar</button>`. El nombre accesible empieza con el texto visible (label-in-name).
+- "Borrar": `try { localStorage.removeItem(RECENT_KEY) } catch {}`; luego `setSymbols([])` siempre (si el storage falla, al menos se oculta en esta vista). Como el boton desaparece, el foco pasa a `document.getElementById("search-page-q")?.focus()` para que el usuario de teclado no quede en `body`.
+- `SYMBOL_CHIP_CLASS` se exporta de `PopularSymbols.tsx` (la cadena actual de sus chips, sin cambiarla), para que los dos bloques no diverjan.
+- La lista no se sincroniza entre pestañas (sin listener de `storage`): se lee al montar.
+
+### `MarketToday` (Server)
+
+```tsx
+export function MarketToday({ title = "Mercado hoy" }: { title?: string }) // h2#market-today = {title}
+```
+
+Solo cambia el texto del `h2`; la grilla y los `<Suspense>` por tarjeta quedan igual.
+
+### `lib/sectors.ts`
+
+```ts
+import type { StockSearchResult } from "./api";
+
+export type SectorEntry = { symbol: string; name: string; type: StockSearchResult["type"] };
+export type Sector = { id: string; title: string; entries: readonly SectorEntry[] };
+
+export const SECTORS: readonly Sector[] = [/* ... */];
+```
+
+| `id` | `title` | Entradas (`symbol` — `name`), en orden |
+|---|---|---|
+| `tech` | Tecnología | AAPL — Apple; MSFT — Microsoft; NVDA — NVIDIA; GOOGL — Alphabet; META — Meta Platforms |
+| `finance` | Finanzas | JPM — JPMorgan Chase; V — Visa; MA — Mastercard; BAC — Bank of America; GS — Goldman Sachs |
+| `health` | Salud | JNJ — Johnson & Johnson; UNH — UnitedHealth; LLY — Eli Lilly; PFE — Pfizer; ABBV — AbbVie |
+| `consumer` | Consumo | KO — Coca-Cola; PG — Procter & Gamble; WMT — Walmart; MCD — McDonald's; NKE — Nike |
+| `energy` | Energía | XOM — Exxon Mobil; CVX — Chevron; COP — ConocoPhillips |
+| `etf` | ETFs | SPY — SPDR S&P 500 ETF Trust; QQQ — Invesco QQQ Trust; DIA — SPDR Dow Jones Industrial Average ETF Trust; VTI — Vanguard Total Stock Market ETF; VOO — Vanguard S&P 500 ETF |
+
+Las entradas de `etf` llevan `type: "etf"`; las demas, `"stock"`. Total: 28 filas. El `id` solo sirve para `key`.
+
+### `SectorExplorer` (Server, sincrono)
+
+- **Decision: tarjetas simples, sin `<details>`.** `<summary>` se expone como un control (rol tipo boton) y en varios lectores de pantalla sus hijos pierden la semantica: un `<h3>` dentro de `<summary>` deja de aparecer en la navegacion por encabezados. Como el pedido era usar `<details>` solo si seguia accesible, y las 6 tarjetas caben abiertas, se usan tarjetas con `h3` real.
+- `<section aria-labelledby="sector-explorer" className="flex flex-col gap-4">` con `<h2 id="sector-explorer" className="text-lg font-semibold tracking-tight">Explorar por sector</h2>` (mismo estilo que el `h2` de `MarketToday`).
+- Grilla `grid gap-3 md:grid-cols-2` (1 columna en movil, 2 en escritorio). Cada sector es un `<div className="rounded-lg border border-border bg-surface">` (sin `aria-labelledby`: no esta permitido en un `div` sin rol; el `h3` ya da la estructura) con:
+  - `<h3 className="px-4 pt-3 pb-2 text-sm font-semibold">{title}</h3>`.
+  - `<ul className="divide-y divide-border">` con un `<li>` por entrada. Cada fila es un `<Link href={\`/stocks/${symbol}\`}>` con las clases de fila de `ResultList` (`flex min-h-12 items-center gap-4 px-4 py-2.5 text-sm transition-colors hover:bg-border/40 focus-visible:-outline-offset-2`):
+    - `<span className="w-16 shrink-0 font-semibold">{symbol}</span>`;
+    - `<span className="min-w-0 flex-1 truncate text-muted">{name}</span>`;
+    - `<TypeBadge type={type} />`.
+- Debajo de la grilla: `<p className="text-sm text-muted">Lista de ejemplo para explorar; no es recomendación de inversión.</p>`.
+- El nombre en `truncate` evita scroll horizontal a 375 px.
+
+### Costo en el proveedor
+
+Solo "Índices de referencia" llama al API: 3 `GET /stocks/:symbol` con los mismos simbolos y keys de cache que la Home (ver 02-backend, F16). Recientes y sectores: 0 llamadas.
+
+### Tests (Vitest, sin red ni Supabase real)
+
+Mocks: los de F06 (`@/lib/api`, `@/lib/supabase/server`, `next/form` y el fake sincrono de `@/components/home/QuoteCard`). `localStorage` es el de jsdom: se limpia en `beforeEach` (`localStorage.clear()`), y para simular fallas se usa `vi.spyOn(Storage.prototype, "getItem" | "setItem" | "removeItem").mockImplementation(() => { throw new Error("blocked") })`, restaurado en `afterEach`.
+
+| Archivo | Casos |
+|---|---|
+| `lib/recent.test.ts` | `addRecent([], "aapl")` → `["AAPL"]`. `addRecent(["NVDA","AAPL"], "AAPL")` → `["AAPL","NVDA"]` (sin duplicado, al frente). Con 8 elementos, agregar uno nuevo → 8 y se cae el ultimo. `max` personalizado (`3`) respeta el corte. Simbolo invalido (`"AAPL1"`, `""`) → la lista igual y una copia (no la misma referencia). `parseRecent(null)` → `[]`; `"no-json"` → `[]`; `"{}"`, `"42"`, `"\"AAPL\""`, `"null"` (no arreglos) → `[]`; `'["aapl", 3, null, "BAD!", "NVDA", "AAPL"]'` → `["AAPL","NVDA"]`; un arreglo de 12 validos → los primeros 8. `RECENT_KEY` es `"si:recent-symbols"`. |
+| `lib/sectors.test.ts` | 6 sectores con titulos Tecnología, Finanzas, Salud, Consumo, Energía y ETFs, en orden. 28 entradas en total con los simbolos de la tabla en orden. Cada `symbol` cumple `normalizeSymbol(symbol) === symbol`. Ningun sector repite un simbolo. Cada `name` no esta vacio. Los 5 del sector ETFs tienen `type: "etf"` y todos los demas `"stock"`. Los `id` son unicos. |
+| `components/stocks/RecentSymbols.test.tsx` | Con `localStorage` `'["AAPL","NVDA"]'`: tras el efecto (`findByRole`), `nav` "Vistos recientemente" con enlaces AAPL y NVDA en orden a `/stocks/{S}`. Storage vacio → `container` vacio. Storage con basura (`"{oops"`) → vacio. `getItem` lanza → vacio y sin excepcion. Clic en "Borrar" → `localStorage.getItem(RECENT_KEY)` es `null`, el `nav` desaparece y el foco va al input `#search-page-q` (renderizado en el test). `removeItem` lanza → el `nav` igual desaparece. |
+| `components/stocks/TrackRecentSymbol.test.tsx` | Con storage `'["NVDA"]'`, `render(<TrackRecentSymbol symbol="AAPL" />)` → storage `'["AAPL","NVDA"]'` y `container` vacio. Montar con `"NVDA"` despues → `'["NVDA","AAPL"]'`. `setItem` lanza → no lanza. `getItem` lanza → no lanza. |
+| `components/stocks/StockOverview.test.tsx` (actualizar) | Mockear `./TrackRecentSymbol` con `({ symbol }) => <div data-testid="track" data-symbol={symbol} />`. Respuesta OK de AAPL → un `track` con `data-symbol="AAPL"`. 404 `SYMBOL_NOT_FOUND`, `"AAPL1"` (invalido) y `PROVIDER_ERROR` → sin `track`. Los casos existentes no cambian. |
+| `components/home/MarketToday.test.tsx` (actualizar) | Sin props → `h2` "Mercado hoy" (caso actual). `title="Índices de referencia"` → `h2` con ese texto, `getByRole("region", { name: "Índices de referencia" })` existe y las 3 tarjetas siguen siendo SPY, QQQ y DIA. |
+| `components/stocks/SectorExplorer.test.tsx` | `h2` "Explorar por sector"; 6 `h3` con los titulos en orden; 28 enlaces, p. ej. "AAPL … Apple" a `/stocks/AAPL` y "VOO … Vanguard S&P 500 ETF" a `/stocks/VOO`; 5 badges "ETF" y 23 "Acción"; la nota "Lista de ejemplo para explorar; no es recomendación de inversión."; ninguna funcion de `api` fue llamada. |
+| `components/stocks/SearchDiscovery.test.tsx` (QuoteCard mockeado; `RecentSymbols` mockeado con un `<nav aria-label="Vistos recientemente">`) | Orden en el DOM (`compareDocumentPosition`): "Vistos recientemente", `nav` "Populares", `h2` "Índices de referencia", `h2` "Explorar por sector". No hay `h2` "Mercado hoy". |
+| `components/stocks/SearchResults.test.tsx` (actualizar; `./SearchDiscovery` mockeado con `<div data-testid="discovery" />`) | Sin `q`: la linea de ayuda exacta, `discovery` presente, sin "Busca una empresa o ETF" y sin llamada al API. Con `q: "apple"`: la linea de ayuda, los resultados como antes y sin `discovery`. Con `q` y `[]` → "Sin resultados para «zzz»" sin `discovery`. Con `ApiError` → `role="alert"` sin `discovery`. Los demas casos existentes no cambian. |
+| `app/(app)/page.test.tsx` (Home, sin cambios) | Sigue pasando: `h2` "Mercado hoy" y sin la linea de ayuda de `/search`. |
+
+### Criterios de aceptacion
+
+- [ ] `pnpm --filter web build`, `lint` y `test` pasan. Sin errores de hidratacion en la consola al abrir `/search` con recientes guardados.
+- [ ] El HTML de `/search` (ver codigo fuente) ya trae la linea de ayuda, "Populares" y "Explorar por sector"; "Vistos recientemente" no viene en el HTML (aparece despues de hidratar).
+- [ ] `SectorExplorer` no importa `@/lib/api`; ningun `fetch` al API fuera de `lib/api.ts`; solo `RecentSymbols` y `TrackRecentSymbol` son `"use client"` nuevos.
+- [ ] La Home se ve igual ("Mercado hoy").
+- [ ] A 375 px: sectores en 1 columna, nombres truncados y sin scroll horizontal; en escritorio, 2 columnas. Modo claro y oscuro.
+
+### Pasos manuales pendientes
+
+Anotar en `PRUEBAS-MANUALES.md` (en local y en la app desplegada, con sesion):
+
+1. Abrir `/search` sin `q` con el almacenamiento del sitio limpio (DevTools > Application > Local Storage): buscador, la linea "Busca por nombre (Apple) o por símbolo (AAPL). Solo acciones y ETFs de EE. UU.", "Populares", "Índices de referencia" (SPY, QQQ, DIA) y "Explorar por sector". No aparece "Vistos recientemente" ni "Busca una empresa o ETF".
+2. Abrir `/stocks/AAPL`, luego `/stocks/NVDA`, luego `/stocks/AAPL` y volver a `/search`: "Vistos recientemente" muestra AAPL, NVDA en ese orden. En Local Storage, `si:recent-symbols` vale `["AAPL","NVDA"]`.
+3. Abrir `/stocks/ZZZZZ` y volver a `/search`: ZZZZZ no aparece en recientes.
+4. Abrir 9 fichas distintas: solo quedan las ultimas 8, la mas reciente primero.
+5. Pulsar "Borrar" (con teclado: Tab + Enter): el bloque desaparece y el foco queda en el buscador. Recargar: sigue sin aparecer.
+6. En Local Storage poner `si:recent-symbols` = `hola` y recargar `/search`: la pagina carga sin el bloque y sin errores en la consola.
+7. Buscar "apple": se ven la linea de ayuda y los resultados como antes, sin recientes, populares, indices ni sectores.
+8. "Explorar por sector": 6 tarjetas (Tecnología, Finanzas, Salud, Consumo, Energía, ETFs); cada fila abre su ficha; los ETFs dicen "ETF" y el resto "Acción"; debajo la nota "Lista de ejemplo para explorar; no es recomendación de inversión.". En DevTools > Network no hay peticiones al API por este bloque.
+9. Abrir `/`: el bloque sigue diciendo "Mercado hoy".
+10. Con el API apagado: `/search` carga, las tarjetas de indices dicen "No disponible" y recientes, populares y sectores funcionan.
+11. A 375 px y en escritorio, modo claro y oscuro, solo con teclado: sin scroll horizontal, foco visible, sectores en 1 y 2 columnas.

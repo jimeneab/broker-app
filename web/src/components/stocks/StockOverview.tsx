@@ -8,6 +8,7 @@ import { PriceChart } from "./PriceChart";
 import { StockHeader } from "./StockHeader";
 import { StockMetrics } from "./StockMetrics";
 import { StockTabs } from "./StockTabs";
+import { TrackRecentSymbol } from "./TrackRecentSymbol";
 
 /** Inline instead of notFound(): after streaming starts the status stays 200 anyway, and this keeps a useful next step. */
 function SymbolNotFound({ raw }: { raw: string }) {
@@ -42,6 +43,7 @@ export async function StockOverview({ params }: { params: Promise<{ symbol: stri
 
   return (
     <div className="flex flex-col gap-8">
+      <TrackRecentSymbol symbol={data.symbol} />
       <StockHeader data={data} />
       <StockTabs>
         <PriceChart symbol={data.symbol} />

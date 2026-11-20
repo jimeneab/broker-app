@@ -21,6 +21,7 @@ App web para ver informacion financiera de la bolsa (US), con experiencia person
 | F08 | Analisis tecnico | Dia 2 | F03 | pending |
 | F09 | Simulador de trading | Dia 2 | F03 | pending |
 | F15 | Documentacion OpenAPI (Swagger) del API | Dia 2 | F03 | ready |
+| F16 | Pagina de busqueda enriquecida | Dia 2 | F03, F06 | ready |
 | F10 | Analizador de carteras | Si sobra tiempo | F09 | pending |
 | F11 | Libertad financiera | Si sobra tiempo | F02 | pending |
 | F12 | Learning | Si sobra tiempo | F02 | pending |
@@ -269,6 +270,20 @@ App web para ver informacion financiera de la bolsa (US), con experiencia person
   - `/docs` y `/openapi.json` responden sin token (supertest).
   - Un test compara las rutas del router con los `paths` del documento (`:param` ↔ `{param}`): si no coinciden, falla.
 - **Spec:** `prompts/specs/01-product.md`, `02-backend.md` y `03-frontend.md`, seccion F15.
+
+### F16 — Pagina de busqueda enriquecida
+**Objetivo:** que `/search` sin texto deje de ser una pantalla vacia y ayude a descubrir stocks. Solo web.
+
+- **API:** sin endpoints nuevos. Los indices reutilizan `GET /stocks/:symbol` (mismos simbolos que la Home, ya en cache); el explorador por sector es un catalogo estatico sin llamadas.
+- **Web:** `/search` sin `q`, en orden:
+  1. Buscador (`SearchForm`) con la linea de ayuda "Busca por nombre (Apple) o por símbolo (AAPL). Solo acciones y ETFs de EE. UU." (la linea se ve tambien con `q`). Se quita el `EmptyState` actual.
+  2. "Vistos recientemente": ultimos 8 simbolos abiertos, en `localStorage` (`si:recent-symbols`), con "Borrar". La ficha registra el simbolo solo si cargo bien.
+  3. "Populares" (`PopularSymbols` tal cual).
+  4. "Índices de referencia" (`MarketToday` con prop `title`).
+  5. "Explorar por sector": 6 sectores con 3–5 simbolos cada uno, catalogo en `lib/sectors.ts`, y la nota "Lista de ejemplo para explorar; no es recomendación de inversión."
+  - Con `q`, la pagina se ve como hoy (resultados, vacio o error) mas la linea de ayuda.
+- **Aceptacion:** cada bloque falla solo; `RecentSymbols` nunca rompe el SSR; la Home no cambia; tests de `lib/recent.ts`, `lib/sectors.ts` y de cada componente nuevo.
+- **Spec:** `prompts/specs/01-product.md`, `02-backend.md` y `03-frontend.md`, seccion F16.
 
 ---
 

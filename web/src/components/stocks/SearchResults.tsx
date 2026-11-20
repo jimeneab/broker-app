@@ -4,6 +4,7 @@ import { EmptyState } from "@/components/states/EmptyState";
 import { ErrorState } from "@/components/states/ErrorState";
 import { api, errorMessage, type StockSearchResult } from "@/lib/api";
 import { getServerAccessToken } from "@/lib/supabase/server";
+import { SearchDiscovery } from "./SearchDiscovery";
 import { TypeBadge } from "./TypeBadge";
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
@@ -34,6 +35,10 @@ export function SearchForm({ q }: { q: string }) {
       </button>
     </Form>
   );
+}
+
+export function SearchHint() {
+  return <p className="text-sm text-muted">Busca por nombre (Apple) o por símbolo (AAPL). Solo acciones y ETFs de EE. UU.</p>;
 }
 
 function ResultList({ results }: { results: StockSearchResult[] }) {
@@ -71,9 +76,7 @@ export async function SearchResults({ searchParams }: { searchParams: SearchPara
 
   let body;
   if (!q) {
-    body = (
-      <EmptyState title="Busca una empresa o ETF" description="Escribe un nombre o símbolo, por ejemplo Apple o AAPL." />
-    );
+    body = <SearchDiscovery />;
   } else if (error) {
     body = <ErrorState message={error} />;
   } else if (!results.length) {
@@ -94,6 +97,7 @@ export async function SearchResults({ searchParams }: { searchParams: SearchPara
   return (
     <div className="flex flex-col gap-4">
       <SearchForm q={q} />
+      <SearchHint />
       {body}
     </div>
   );

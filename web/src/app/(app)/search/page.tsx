@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
-import { SearchForm, SearchResults } from "@/components/stocks/SearchResults";
+import { SearchForm, SearchHint, SearchResults } from "@/components/stocks/SearchResults";
 import { LoadingState } from "@/components/states/LoadingState";
 
 export const metadata: Metadata = { title: "Buscar · Stock Insights" };
@@ -13,6 +13,7 @@ export default function SearchPage({ searchParams }: PageProps<"/search">) {
         fallback={
           <div className="flex flex-col gap-4">
             <SearchForm q="" />
+            <SearchHint />
             <LoadingState label="Buscando…" />
           </div>
         }
