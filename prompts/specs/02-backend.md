@@ -43,8 +43,10 @@ Ver F00. Finnhub (`https://finnhub.io/api/v1`) para search, quote, profile, metr
 | GET | `/stocks/search?q=` | si | F03 |
 | GET | `/stocks/:symbol` | si | F03 |
 | GET | `/stocks/:symbol/history?range=` | si | F03 |
+| GET | `/openapi.json` | no | F15 |
+| GET | `/docs` | no | F15 |
 
-F00 no agrega endpoints.
+F00 y F06 no agregan endpoints. Desde F15, todo endpoint nuevo se documenta en `api/src/docs/openapi.ts` (el test de F15 falla si no).
 
 ## Data model
 
@@ -1016,3 +1018,140 @@ Anotar en `PRUEBAS-MANUALES.md`:
    - `GET /stocks/AAPL/history?range=1M` y luego `range=1Y` → en `provider_cache` hay una sola fila `twelvedata:history:AAPL:1day:260`. `range=5Y` agrega `…:1week:270`. Las velas van en orden ascendente.
 3. En Table Editor, `provider_cache` muestra las keys `finnhub:search:apple`, `finnhub:quote:AAPL`, `finnhub:profile:AAPL` y `finnhub:metrics:AAPL` con su `expires_at`.
 4. Repetir `GET /stocks/AAPL` antes de que pasen 60 s: en el dashboard de Finnhub (o en los logs) no aparecen llamadas nuevas.
+
+---
+
+## F06 — Home
+
+**Estatus:** in_progress
+
+### Decision: sin endpoint nuevo
+
+`PLAN.md` proponia `GET /market/overview`. Se descarta: cada tarjeta de la Home (3 de "Mercado hoy" y 4 de "Ideas") llama al endpoint existente `GET /stocks/:symbol` (F03), que ya trae quote y profile con `logoUrl`. Asi no hay codigo nuevo en `api/`, cada tarjeta falla sola (requisito de F06) y se reutiliza la cache de F03 (las mismas keys `finnhub:quote:{S}`, `finnhub:profile:{S}`, `finnhub:metrics:{S}`). `GET /me` (F01) da el nombre y el perfil.
+
+### Requisitos
+
+1. F06 NO DEBE agregar rutas, services ni migraciones en `api/`.
+2. EL API no cambia de comportamiento: `GET /stocks/:symbol` sigue respondiendo segun la tabla de "Composicion" de F03, y el web interpreta cualquier error como "No disponible" en la tarjeta.
+
+### Presupuesto de llamadas (costo aceptado)
+
+Cada tarjeta es un `GET /stocks/:symbol` completo: quote + profile + metrics, aunque la tarjeta no use las metricas. Es el costo de no crear un endpoint nuevo.
+
+| Situacion | Llamadas a Finnhub (60/min) |
+|---|---|
+| Primera Home del dia, nada en cache | hasta 21 (7 tarjetas × 3). Con el perfil moderado, QQQ aparece en las dos listas: son 6 simbolos distintos, pero dos peticiones en paralelo sin cache pueden pedir QQQ dos veces (`getOrSet` no deduplica en vuelo). |
+| Otra Home antes de 60 s | 0 |
+| Otra Home despues de 60 s | 7 (solo quotes; profile y metrics duran 7 dias) |
+
+- Con 60 llamadas por minuto, unas 8 Homes por minuto con quotes vencidos llegan al limite. Si se llega, las tarjetas afectadas muestran "No disponible" (`503 PROVIDER_RATE_LIMITED`) y el resto de la app sigue.
+- Twelve Data: 0 llamadas (la Home no pide historico).
+- Gancho F07: el carrusel reemplaza la lista de ideas; si su costo crece, F07 puede agregar un endpoint que devuelva solo quotes.
+
+### Tests
+
+Ninguno nuevo en `api/`: no hay codigo nuevo. Los casos de `GET /stocks/:symbol` (200, 404, 502, 503 y cache) ya estan cubiertos por F03.
+
+---
+
+## F15 — Documentacion OpenAPI (Swagger) del API
+
+**Estatus:** in_progress
+
+### Requisitos
+
+1. CUANDO se llama `GET /openapi.json` (sin token), EL sistema DEBE responder `200` con el documento OpenAPI 3.1 exportado por `api/src/docs/openapi.ts`, con `Content-Type: application/json`.
+2. CUANDO se llama `GET /docs` (sin token), EL sistema DEBE responder `200` con `Content-Type: text/html` y una pagina que carga Swagger UI desde un CDN con una version exacta fijada y apunta a `/openapi.json`.
+3. Las dos rutas se registran **antes** de `router.use(requireAuth)` en `routes/index.ts`, justo despues de `/health`.
+4. EL documento DEBE describir todas las rutas de `routes/index.ts` con su metodo, parametros, body, respuestas `200` y errores, y DEBE coincidir con el router: un test falla si sobra o falta una ruta (ver "Tests").
+5. EL documento DEBE declarar el esquema de seguridad `bearerAuth` (`type: http`, `scheme: bearer`, `bearerFormat: JWT`) como seguridad global, y `/health` con `security: []`.
+6. NO se agregan dependencias npm (ni `swagger-ui-express` ni generadores): debe funcionar en Vercel serverless solo con un objeto y un string HTML.
+7. Las rutas `/openapi.json` y `/docs` no se documentan dentro del propio documento.
+8. **Regla para features futuras:** toda feature que agregue o cambie un endpoint DEBE actualizar `api/src/docs/openapi.ts` en el mismo cambio, y listarlo en su seccion "Capas y archivos".
+
+### Capas y archivos
+
+```
+api/src/
+├── docs/
+│   ├── openapi.ts                 # export const openApiDocument = { openapi: "3.1.0", ... } (escrito a mano)
+│   ├── swaggerUi.ts               # export const swaggerUiHtml: string (pagina HTML de Swagger UI)
+│   └── openapi.test.ts            # test de cobertura router <-> documento
+├── controllers/docsController.ts  # getOpenApi, getDocs
+└── routes/index.ts                # + 2 rutas publicas antes de requireAuth
+```
+
+- `routes/index.ts`:
+  ```ts
+  router.get("/health", getHealth);
+  router.get("/openapi.json", getOpenApi);
+  router.get("/docs", getDocs);
+  router.use(requireAuth);
+  ```
+- `controllers/docsController.ts`: `getOpenApi` → `res.json(openApiDocument)`; `getDocs` → `res.type("html").send(swaggerUiHtml)`. Sin service: es contenido estatico, no logica de negocio (mismo criterio que `healthController`).
+- `openapi.ts` es un objeto TypeScript plano (`as const` o con un tipo local minimo), sin `any`. No se valida con Zod: no es input externo.
+- `servers` se omite: en OpenAPI 3.1 el default es `/`, relativo a donde se sirve el documento. Asi "Try it out" funciona igual en `localhost:4000` y en el dominio de Vercel, sin CORS (mismo origen).
+
+### Contenido del documento
+
+`info`: `title: "Stock Insights API"`, `version: "1.0.0"` y una descripcion corta (auth con JWT de Supabase, errores `{ error: { code, message } }`, datos de mercado con cache).
+
+`components.schemas` (los nombres son los del codigo; los campos, los de las respuestas reales):
+
+| Schema | Campos | Fuente |
+|---|---|---|
+| `Error` | `error: { code: string, message: string }` (ambos requeridos) | `middlewares/errorHandler.ts` |
+| `Me` | `id`, `email`, `displayName` (string); `riskScore` (integer o null, 6–24); `riskProfile` (enum `conservador`/`moderado`/`agresivo` o null); `onboardedAt` (date-time o null); `createdAt` (date-time) | `services/profileService.ts` |
+| `RiskProfileInput` | `answers`: array de exactamente 6 integers, cada uno de 1 a 4 | `riskProfileInputSchema` |
+| `StockSearchResponse` | `query` (string, normalizada); `results`: array (max 10) de `{ symbol, name, type: "stock" o "etf" }` | `searchStocks` |
+| `Quote` | `symbol`, `price`, `change` (o null), `changePercent` (puntos %, o null), `high`, `low`, `open`, `previousClose`, `timestamp` (unix s) | `providers/types.ts` |
+| `CompanyProfile` | `symbol`, `name` (string); `logoUrl`, `industry`, `country`, `website`, `exchange`, `currency` (string o null); `marketCapMillions` (number o null) | `providers/types.ts` |
+| `CompanyMetrics` | `peRatio`, `beta`, `week52High`, `week52Low`, `dividendYieldPercent`, `marketCapMillions` (todos number o null) | `providers/types.ts` |
+| `StockDetail` | `symbol`, `quote: Quote`, `profile: CompanyProfile` o null, `metrics: CompanyMetrics` o null | `getStock` |
+| `Candle` | `date` ("YYYY-MM-DD"), `open`, `high`, `low`, `close`, `volume` (o null) | `providers/types.ts` |
+| `StockHistory` | `symbol`, `range` (enum `1M`/`6M`/`1Y`/`5Y`), `interval` (enum `1day`/`1week`), `candles: Candle[]` (ascendentes) | `getStockHistory` |
+
+En 3.1 los nullables se escriben `type: ["string", "null"]` (no `nullable: true`, que es de 3.0); un `$ref` nullable usa `oneOf: [{ $ref }, { type: "null" }]`. El implementer verifica cada campo contra `providers/types.ts` y los services antes de escribirlo.
+
+`components.responses` reutilizables, cada una con `$ref: "#/components/schemas/Error"` y un `example`: `ValidationError` (400), `Unauthorized` (401), `ProviderError` (502), `ProviderRateLimited` (503), `InternalError` (500).
+
+Rutas (en el documento `{param}`; en Express `:param`):
+
+| Ruta | Parametros / body | Respuestas |
+|---|---|---|
+| `GET /health` (`security: []`) | — | `200 { status: "ok" }` |
+| `GET /me` | — | `200 Me`; `401 UNAUTHORIZED`; `404 PROFILE_NOT_FOUND`; `500 INTERNAL_ERROR` |
+| `PUT /me/risk-profile` | body `RiskProfileInput` (requerido, `application/json`) | `200 Me`; `400 VALIDATION_ERROR` ("answers must be an array of 6 integers between 1 and 4" o "Malformed JSON body"); `401`; `404 PROFILE_NOT_FOUND`; `500` |
+| `GET /stocks/search` | query `q` (requerido, string, 1–50 caracteres tras `trim`) | `200 StockSearchResponse`; `400 VALIDATION_ERROR "q must be 1 to 50 characters"`; `401`; `502 PROVIDER_ERROR`; `503 PROVIDER_RATE_LIMITED` |
+| `GET /stocks/{symbol}` | path `symbol` (pattern `^[A-Za-z]{1,5}(\.[A-Za-z])?$`, se normaliza a mayusculas; ejemplo `AAPL`) | `200 StockDetail`; `400 VALIDATION_ERROR "Invalid symbol"`; `401`; `404 SYMBOL_NOT_FOUND`; `502`; `503` |
+| `GET /stocks/{symbol}/history` | path `symbol` (igual); query `range` (requerido, enum `1M`/`6M`/`1Y`/`5Y`) | `200 StockHistory`; `400 VALIDATION_ERROR` ("Invalid symbol" o "range must be one of 1M, 6M, 1Y, 5Y"); `401`; `404 SYMBOL_NOT_FOUND`; `502`; `503` |
+
+- Cada operacion lleva `operationId` (`getHealth`, `getMe`, `putRiskProfile`, `searchStocks`, `getStock`, `getStockHistory`), `summary` en español y un `tag` (`Health`, `Me`, `Stocks`).
+- Cada `200` lleva un `example` tomado de los JSON de ejemplo de F01–F03 de este archivo.
+- Las rutas con auth no repiten `security`: heredan la global.
+
+### Pagina `/docs` (`docs/swaggerUi.ts`)
+
+- HTML minimo (`<!doctype html>`, `lang="es"`, `<title>Stock Insights API · Docs</title>`) que carga `swagger-ui.css` y `swagger-ui-bundle.js` de `https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.17.14/` (version exacta, sin rangos).
+- Ambos tags llevan `integrity` (SHA-384 de esos archivos exactos) y `crossorigin="anonymous"`: en esta pagina el usuario pega su JWT, asi que un CDN comprometido no debe poder inyectar codigo. El implementer calcula el hash con `curl -s <url> | openssl dgst -sha384 -binary | openssl base64 -A`.
+- Script inline: `SwaggerUIBundle({ url: "/openapi.json", dom_id: "#swagger-ui" })`. `url` relativa, por la misma razon que `servers`.
+- No se agregan headers de CSP ni otros middlewares al API.
+
+### Tests (Vitest + supertest, sin red ni Supabase real)
+
+| Archivo | Casos |
+|---|---|
+| `app.test.ts` (actualizar) | `GET /openapi.json` sin token → `200`, `Content-Type` JSON, `body.openapi` empieza con `"3.1"` y `body.paths` tiene `/health`. `GET /docs` sin token → `200`, `Content-Type` `text/html`, el HTML contiene `swagger-ui-dist@5.17.14`, `integrity=` y `/openapi.json`. `GET /me` sin token sigue en `401` (las rutas publicas no abren las demas). |
+| `docs/openapi.test.ts` (nuevo) | **Cobertura router ↔ documento:** recorre `router.stack` (Express 5: cada layer con `route` tiene `route.path` y `route.methods`), ignora `/openapi.json` y `/docs`, convierte `:param` → `{param}` (`path.replace(/:(\w+)/g, "{$1}")`) y comprueba que cada par (ruta, metodo) existe en `openApiDocument.paths`. Y al reves: cada (ruta, metodo) del documento existe en el router. **Consistencia:** cada operacion menos `GET /health` documenta `401`; `GET /health` tiene `security: []`; existe `components.securitySchemes.bearerAuth` con `scheme: "bearer"`; cada `{param}` de una ruta tiene su parametro `in: "path"`; cada `$ref` apunta a un componente que existe. |
+
+Si en la version instalada de Express 5 `router.stack` no expone `route.path` como string, el implementer lo verifica en `node_modules/router` y ajusta solo el recorrido, no el criterio del test.
+
+### Pasos manuales pendientes
+
+Anotar en `PRUEBAS-MANUALES.md`:
+
+1. `pnpm dev:api` y abrir `http://localhost:4000/docs`: aparece Swagger UI con los 6 endpoints agrupados en Health, Me y Stocks, sin errores en la consola (ni de SRI ni de CORS).
+2. `http://localhost:4000/openapi.json` responde el documento sin token.
+3. En `/docs`, "Try it out" en `GET /stocks/search` con `q=apple` sin autorizar → `401 UNAUTHORIZED`.
+4. "Authorize" → pegar un `access_token` real (sin el prefijo `Bearer`) → "Try it out" en `GET /stocks/search` con `q=apple` → `200` con AAPL. Probar tambien `GET /me` y `GET /stocks/{symbol}` con `AAPL`.
+5. Repetir 1 y 4 en el API desplegado (`https://<api>.vercel.app/docs`).

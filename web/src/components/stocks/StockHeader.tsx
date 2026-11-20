@@ -1,22 +1,11 @@
 import type { StockDetail } from "@/lib/api";
 import { formatChange, formatCurrency, formatPercent, formatQuoteTime } from "@/lib/format";
-
-/** Drawn triangle, not a glyph, so it matches the icon stroke system. Color is never the only signal. */
-function Trend({ up }: { up: boolean }) {
-  return (
-    <>
-      <svg aria-hidden="true" viewBox="0 0 10 10" className={`size-2.5 fill-current ${up ? "" : "rotate-180"}`}>
-        <path d="M5 1.5 9 8.5H1z" />
-      </svg>
-      <span className="sr-only">{up ? "Sube" : "Baja"}</span>
-    </>
-  );
-}
+import { Trend, changeTone } from "./Trend";
 
 export function StockHeader({ data }: { data: StockDetail }) {
   const { symbol, quote, profile } = data;
   const change = quote.change ?? 0;
-  const tone = change > 0 ? "text-up" : change < 0 ? "text-down" : "text-muted";
+  const tone = changeTone(change);
 
   return (
     <header className="flex flex-col gap-5">

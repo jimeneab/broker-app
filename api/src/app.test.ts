@@ -49,6 +49,23 @@ describe("app", () => {
     expect(res.body).toEqual({ status: "ok" });
   });
 
+  it("GET /openapi.json returns the OpenAPI 3.1 document without a token", async () => {
+    const res = await request(app).get("/openapi.json");
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toMatch(/application\/json/);
+    expect(res.body.openapi).toMatch(/^3\.1/);
+    expect(res.body.paths).toHaveProperty("/health");
+  });
+
+  it("GET /docs returns the Swagger UI page without a token", async () => {
+    const res = await request(app).get("/docs");
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toMatch(/text\/html/);
+    expect(res.text).toContain("swagger-ui-dist@5.17.14");
+    expect(res.text).toContain("integrity=");
+    expect(res.text).toContain("/openapi.json");
+  });
+
   it("GET /me without a token returns 401", async () => {
     const res = await request(app).get("/me");
     expect(res.status).toBe(401);

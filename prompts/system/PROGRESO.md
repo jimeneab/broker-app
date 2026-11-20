@@ -227,3 +227,47 @@
   - Verificacion visual en navegador (375 px, modo oscuro, grafica): no hubo herramienta de captura en la sesion. Queda en PRUEBAS-MANUALES.
   - Un `tsx watch` del API anterior a esta sesion (PID 19284) ocupaba el puerto 4000. Se uso para la verificacion, porque ya habia recargado el codigo nuevo. No se pudo detener: el permiso se nego porque el proceso no lo inicio el agente. El `next dev` de esta sesion si se detuvo y el puerto 3000 quedo libre.
   - Despliegue: no se hizo commit ni push.
+
+## F15 — Documentacion OpenAPI (Swagger) del API (2026-11-20) → `testing`
+
+### Que se implemento
+- `api/src/docs/openapi.ts`: documento OpenAPI 3.1 escrito a mano con los 6 endpoints (`/health`, `/me`, `/me/risk-profile`, `/stocks/search`, `/stocks/{symbol}`, `/stocks/{symbol}/history`), schemas (`Error`, `Me`, `RiskProfileInput`, `StockSearchResponse`, `Quote`, `CompanyProfile`, `CompanyMetrics`, `StockDetail`, `Candle`, `StockHistory`), respuestas reutilizables (`ValidationError`, `Unauthorized`, `ProviderError`, `ProviderRateLimited`, `InternalError`), `bearerAuth` global y `/health` con `security: []`.
+- `api/src/docs/swaggerUi.ts`: pagina HTML que carga `swagger-ui-dist@5.17.14` de jsDelivr con SRI (SHA-384) y `crossorigin="anonymous"`, apuntando a `/openapi.json`.
+- `api/src/controllers/docsController.ts` (`getOpenApi`, `getDocs`) y 2 rutas publicas en `routes/index.ts`, despues de `/health` y antes de `requireAuth`.
+- Tests: `docs/openapi.test.ts` (nuevo, 6 casos: cobertura router ↔ documento en ambos sentidos, 3.1 + `bearerAuth`, `/health` publico y 401 en las demas, parametros `in: path`, `$ref` validos, `operationId` unicos con tag) y 2 casos nuevos en `app.test.ts` (`/openapi.json` y `/docs` sin token).
+
+### Decisiones
+- **Recorrido del router:** en Express 5.3 (`router@2.3.0`) cada layer con `route` tiene `route.path` (string) y `route.methods`, pero `@types/express` no tipa `methods`. El test lee el metodo de cada handler en `route.stack` (`layer.method`, que `router/lib/route.js` asigna en cada registro y si esta tipado) para evitar un cast. El criterio del test es el de la spec.
+- **Tipo local minimo** (`Json`, `Parameter`, `Operation`, `OpenApiDocument`) en vez de `as const`, para que el test pueda indexar `paths` sin casts.
+- **SRI calculado** con `curl -sfL <url> | openssl dgst -sha384 -binary | openssl base64 -A` sobre los archivos de 5.17.14 (152 071 y 1 452 753 bytes).
+- Los 400 con dos mensajes posibles (`PUT /me/risk-profile`, `GET /stocks/{symbol}/history`) usan `examples` con ambos mensajes. Los 404 (`PROFILE_NOT_FOUND`, `SYMBOL_NOT_FOUND`) van inline por ruta.
+- Sin dependencias npm nuevas, sin `servers` (URL relativa) y sin cambios en `web/`.
+
+### Como quedo
+- `pnpm --filter api lint`, `test` (12 archivos / 163 tests) y `build` sin errores.
+- `pnpm dev:api`: `GET /openapi.json` → 200 `application/json` con los 6 paths; `GET /docs` → 200 `text/html` con los tags SRI; `GET /me` sin token → 401. El proceso del API iniciado para la verificacion se detuvo y el puerto 4000 quedo libre.
+- Pendiente: verificacion en navegador (Swagger UI carga sin errores de SRI, "Authorize" + "Try it out") y en el despliegue. Queda en PRUEBAS-MANUALES. No se hizo commit.
+
+## F06 — Home (2026-11-20) → `testing`
+
+### Que se implemento
+- `app/(app)/page.tsx`: Server Component sincrono que reemplaza el placeholder. Orden: `Greeting` (en `Suspense`), buscador (`SearchForm q=""` + `PopularSymbols`), `MarketToday`, `ProfileIdeas` (en `Suspense`) y `ComingSoon`. `metadata.title` = "Home · Stock Insights".
+- `lib/me.ts` (`getMe`: `cache()` de React sobre `api.me` con el token del servidor, devuelve `null` si falla) y `lib/home.ts` (`MARKET_INDEXES`, `IDEAS_BY_PROFILE` con el comentario obligatorio de F07, `ideasFor`).
+- `components/home/`: `Greeting` + `GreetingSkeleton`, `QuoteCard` + `QuoteCardSkeleton`, `MarketToday`, `ProfileIdeas` + `IdeasSkeleton`, `ComingSoon`.
+- `components/stocks/PopularSymbols.tsx` (compartido) y `components/stocks/Trend.tsx` (`Trend` y `changeTone`, extraidos de `StockHeader`, que solo cambio sus imports).
+- Tests nuevos: `lib/home.test.ts`, `lib/me.test.ts`, `Trend.test.tsx`, `PopularSymbols.test.tsx`, `Greeting.test.tsx`, `QuoteCard.test.tsx`, `MarketToday.test.tsx`, `ProfileIdeas.test.tsx`, `ComingSoon.test.tsx`; `app/(app)/page.test.tsx` reescrito. `StockOverview.test.tsx` sin cambios y en verde.
+
+### Decisiones
+- **Diseño (skill impeccable, modo Operate):** se extendio el sistema F00–F03 sin tokens nuevos. Tarjetas con `border-border bg-surface rounded-lg` y hover sutil como las filas de `/search`; chips de Populares con la forma del input/boton de busqueda (`h-8 rounded-md`); badge del perfil con el estilo neutro de `TypeBadge`; "Próximamente" en tono bajo (`h2` chico en `text-muted`, tarjetas con borde punteado y sin fondo) para que no compita con los bloques con datos.
+- **Sin saltos de layout:** `QuoteCard`, su estado "No disponible" y `QuoteCardSkeleton` comparten el mismo contenedor de alto fijo (`h-32`).
+- **`displayName` vacio:** el `h1` dice "Hola" (sin coma) y el bloque del perfil se muestra igual (ver correccion abajo).
+- **`QuoteCard` sin `profile`:** el titulo es el simbolo (en ideas) o el `name` del indice (mercado); el logo solo con `showCompany`.
+- **Test de `getMe`:** `it.each` con objetos `Error` como argumento fallaba en Vitest 5 (el runner reportaba el propio error del caso); se cubrieron ambos rechazos (`ApiError` y `Error`) en un solo caso con `mockRejectedValueOnce`. No hace falta `vi.resetModules()`: el `cache()` de React no memoriza fuera de un render de servidor.
+- Sin dependencias ni variables de entorno nuevas, sin `"use client"` nuevos, sin `"use cache"`, sin cambios en `api/`.
+
+### Como quedo
+- `pnpm --filter web lint`, `tsc --noEmit`, `test` (33 archivos / 186 tests) y `build` sin errores. Build: `/` con prerender parcial (◐), sin error por leer cookies fuera de `Suspense`.
+- `pnpm dev:web`: `GET /` sin sesion → 307 a `/login`. El proceso iniciado se detuvo y el puerto 3000 quedo libre.
+- Detector de impeccable sobre los archivos nuevos: sin hallazgos.
+- Pendiente: verificacion visual con sesion (375 px, claro/oscuro, teclado) y en el despliegue. Queda en PRUEBAS-MANUALES. No se hizo commit.
+- **Correccion tras `rejected` (reviewer):** `Greeting` ocultaba badge, descripcion, puntaje y "Rehacer cuestionario" cuando `displayName` venia vacio. El dueño solo quiere el "Hola" pelado cuando `/me` falla. Ahora `profile` depende solo de `riskProfile`; con nombre vacio solo cambia el `h1` ("Hola", sin coma). Se quito el comentario que lo justificaba, el caso `displayName: ""` de `Greeting.test.tsx` verifica badge, descripcion, puntaje y enlace, y `QuoteCard.test.tsx` verifica tambien `height` del logo. Se actualizo el requisito 3 y la fila de tests de F06 en `03-frontend.md`. lint, test (33 archivos / 186 tests) y build sin errores.

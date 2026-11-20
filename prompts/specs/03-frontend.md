@@ -917,3 +917,212 @@ Anotar en `PRUEBAS-MANUALES.md` (en local y en la app desplegada):
 7. `/stocks/zzzzz` → "No encontramos el símbolo ZZZZZ" con el enlace a Buscar. `/stocks/aapl` (minusculas) funciona.
 8. Cambiar el tema del sistema a oscuro con la ficha abierta: la grafica cambia de colores sin recargar.
 9. A 375 px y solo con teclado (Tab, flechas, Enter, Escape): todo es usable, el foco es visible y no hay scroll horizontal.
+
+---
+
+## F06 — Home
+
+**Estatus:** in_progress
+
+### Requisitos
+
+1. CUANDO se renderiza `/` (`app/(app)/page.tsx`), EL sistema DEBE componer, en orden: `Greeting`, el buscador (`SearchForm q=""` + `PopularSymbols`), "Mercado hoy", "Ideas para tu perfil" y `ComingSoon`. La pagina es un Server Component sincrono: lo que no depende de datos queda en el shell estatico y cada parte con datos va en su propio `<Suspense>`.
+2. CUANDO `api.me` responde, `Greeting` DEBE mostrar el `<h1>` "Hola, {displayName}" y, si `riskProfile` no es `null`: un badge con `RISK_PROFILES[riskProfile].label`, la `description`, "Puntaje {riskScore} de 24" (solo si `riskScore` no es `null`) y el enlace "Rehacer cuestionario" a `/onboarding`.
+3. CUANDO `api.me` falla (cualquier error), `Greeting` DEBE mostrar solo el `<h1>` "Hola", sin badge, sin `ErrorState` y sin relanzar. CUANDO `displayName` esta vacio, el `<h1>` dice "Hola" (sin coma) pero el bloque del perfil (badge, descripcion, puntaje y "Rehacer cuestionario") se muestra igual si `riskProfile` no es `null`.
+4. "Mercado hoy" DEBE renderizar las 3 entradas de `MARKET_INDEXES`, cada una con `<Suspense fallback={<QuoteCardSkeleton />}>` y un `QuoteCard` propio.
+5. "Ideas para tu perfil" DEBE leer el perfil (mismo `getMe` deduplicado que `Greeting`), elegir `ideasFor(riskProfile)` y renderizar 4 `QuoteCard` con `showCompany`, cada uno en su `<Suspense>`. Si `/me` falla, usa `ideasFor(null)` (moderado) y el subtitulo sin perfil.
+6. `QuoteCard` DEBE llamar `api.stock(symbol, { token })` en el servidor. Con datos: `Link` a `/stocks/{symbol}` con nombre, simbolo, `formatCurrency(quote.price)` y el cambio con `Trend`. CUANDO la llamada falla con cualquier error, DEBE mostrar "No disponible" en `text-muted`, del mismo tamaño, sin `role="alert"` y sin relanzar.
+7. EL componente `Trend` privado de `StockHeader.tsx` DEBE moverse a `components/stocks/Trend.tsx` (exportado) sin cambiar su markup; `StockHeader` lo importa y se ve igual.
+8. `ComingSoon` DEBE mostrar 3 tarjetas sin enlaces ni botones.
+9. Ninguna llamada al API fuera de `lib/api.ts`; sin `"use cache"` (datos por usuario); sin Client Components nuevos.
+
+### Dependencias nuevas (`web/`)
+
+Ninguna. Variables de entorno: ninguna nueva.
+
+### Estructura de archivos
+
+```
+web/src/
+├── app/(app)/
+│   └── page.tsx                      # Server sincrono: compone la Home (reemplaza el placeholder)
+├── components/
+│   ├── home/
+│   │   ├── Greeting.tsx              # Server async: saludo + perfil (o solo "Hola")
+│   │   ├── MarketToday.tsx           # Server: h2 + grilla de 3 <Suspense><QuoteCard/></Suspense>
+│   │   ├── ProfileIdeas.tsx          # Server async: lee el perfil → subtitulo + 4 <Suspense><QuoteCard showCompany/></Suspense>
+│   │   ├── QuoteCard.tsx             # Server async: QuoteCard + QuoteCardSkeleton
+│   │   └── ComingSoon.tsx            # Server: 3 tarjetas no clicables
+│   └── stocks/
+│       ├── PopularSymbols.tsx        # Server: chips "Populares" (componente compartido)
+│       ├── Trend.tsx                 # Trend + changeTone, extraidos de StockHeader
+│       └── StockHeader.tsx           # importa Trend y changeTone; mismo render
+└── lib/
+    ├── home.ts                       # MARKET_INDEXES, IDEAS_BY_PROFILE, ideasFor
+    └── me.ts                         # getMe: React cache() de api.me con el token del servidor
+```
+
+### Frontera Server / Client
+
+Todo es Server Component. Ninguna parte de la Home necesita estado ni eventos: el buscador es el `<Form>` de `next/form` que ya usa `/search` y los chips y tarjetas son `Link`. No se manda JS nuevo al cliente.
+
+### Composicion de `page.tsx`
+
+```tsx
+export const metadata: Metadata = { title: "Home · Stock Insights" };
+
+export default function Home() {
+  // <div className="mx-auto max-w-5xl flex flex-col gap-10">
+  //   <Suspense fallback={<GreetingSkeleton />}><Greeting /></Suspense>
+  //   <section aria-label="Buscar"><SearchForm q="" /><PopularSymbols /></section>
+  //   <MarketToday />                                          // sus Suspense van por tarjeta
+  //   <Suspense fallback={<IdeasSkeleton />}><ProfileIdeas /></Suspense>
+  //   <ComingSoon />
+  // </div>
+}
+```
+
+- `Greeting` y `ProfileIdeas` leen la sesion, asi que van dentro de `<Suspense>` (convencion de cookies con Cache Components). `GreetingSkeleton` ocupa el alto del saludo con perfil; `IdeasSkeleton` es el `h2`, una linea de subtitulo y 4 `QuoteCardSkeleton`.
+- `MarketToday` no lee la sesion: es sincrono y cada `QuoteCard` dentro de su `<Suspense>` lee el token.
+- Los esqueletos son locales de cada archivo (no se exportan salvo `QuoteCardSkeleton`).
+
+### `lib/me.ts`
+
+```ts
+import { cache } from "react";
+/** Un solo GET /me por request aunque Greeting y ProfileIdeas lo pidan. Devuelve null si falla. */
+export const getMe = cache(async (): Promise<Me | null> => {
+  try { return await api.me({ token: await getServerAccessToken() }); } catch { return null; }
+});
+```
+
+- `cache` de React deduplica dentro del mismo render del servidor; no persiste entre requests (no es `"use cache"`).
+- Devuelve `null` en vez de lanzar: los dos consumidores tratan la falla igual que "sin perfil".
+
+### `lib/home.ts`
+
+```ts
+export const MARKET_INDEXES = [
+  { symbol: "SPY", name: "S&P 500" },
+  { symbol: "QQQ", name: "Nasdaq 100" },
+  { symbol: "DIA", name: "Dow Jones" },
+] as const;
+
+// F07 reemplaza esta lista estática por recomendaciones personalizadas
+export const IDEAS_BY_PROFILE: Record<RiskProfile, readonly string[]> = {
+  conservador: ["KO", "JNJ", "PG", "VTI"],
+  moderado: ["AAPL", "MSFT", "V", "QQQ"],
+  agresivo: ["NVDA", "TSLA", "AMD", "META"],
+};
+
+export function ideasFor(profile: RiskProfile | null): readonly string[]; // null → moderado
+```
+
+El comentario `// F07 reemplaza esta lista estática por recomendaciones personalizadas` es obligatorio y va exactamente asi sobre `IDEAS_BY_PROFILE`.
+
+### `Greeting` (Server, async)
+
+- `me = await getMe()`.
+- `<h1 className="text-2xl font-semibold tracking-tight">`: `me?.displayName ? \`Hola, ${me.displayName}\` : "Hola"`.
+- Si `me?.riskProfile`: junto al `h1`, badge con `RISK_PROFILES[me.riskProfile].label` (mismo estilo neutro que `TypeBadge`); debajo, `<p className="text-muted max-w-[65ch]">` con la `description`; luego "Puntaje {riskScore} de 24" (si no es `null`) y el `Link` secundario "Rehacer cuestionario" a `/onboarding` (texto chico, `text-muted`, subrayado en hover, como los enlaces de `OnboardingExit`).
+- Sin perfil o con `/me` fallido: solo el `h1`. No se muestra error: el saludo es decorativo y la pagina sigue.
+
+### `PopularSymbols` (Server)
+
+- `export const POPULAR_SYMBOLS = ["AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "GOOGL", "SPY"] as const;`
+- `<nav aria-label="Populares">` con un texto visible "Populares" (`text-sm text-muted`) y una lista de chips: cada uno `<Link href={\`/stocks/${s}\`}>` con el simbolo, en una fila que hace wrap (`flex flex-wrap gap-2`), con foco visible. Compartido para que F03/F07 lo puedan reutilizar (p. ej. en el `EmptyState` de `/search`); F06 solo lo monta en la Home.
+
+### `Trend` (`components/stocks/Trend.tsx`)
+
+- Se mueve tal cual desde `StockHeader.tsx`: el `<svg>` del triangulo (`aria-hidden`, `rotate-180` si baja) y el `sr-only` "Sube"/"Baja".
+- Tambien se mueve la regla del color a una funcion exportada: `changeTone(change: number | null): "text-up" | "text-down" | "text-muted"` (`> 0` → up, `< 0` → down, `0` o `null` → muted). `StockHeader` y `QuoteCard` la usan; no se duplica.
+- `StockHeader` solo cambia sus imports; su render y sus tests (`StockOverview.test.tsx`) no cambian.
+
+### `QuoteCard` (Server, async)
+
+Props: `{ symbol: string; name?: string; showCompany?: boolean }`.
+
+1. `token = await getServerAccessToken()`; `data = await api.stock(symbol, { token })` en `try/catch`. Cualquier error → estado "No disponible".
+2. Con datos, la tarjeta completa es un `<Link href={\`/stocks/${symbol}\`}>` (borde, `surface`, `rounded-lg`, padding, foco visible, hover sutil):
+   - Encabezado: si `showCompany` y hay `profile?.logoUrl`, `<img>` de 32 px (`size-8`, `width={32} height={32}`, `alt=""`, mismas clases que el logo de `StockHeader` y el mismo `eslint-disable-next-line @next/next/no-img-element` con su motivo). Titulo: `name` (mercado) o `profile?.name ?? symbol` (ideas), `truncate`. Debajo, el simbolo en `text-muted`.
+   - Precio: `formatCurrency(quote.price)`, `text-xl font-semibold tabular-nums`.
+   - Cambio: `<span className={changeTone(quote.change)}>` con `<Trend up />` si `change` no es `0` ni `null`, y `{formatChange(change)} ({formatPercent(changePercent, { signed: true })})`.
+3. Sin datos: el mismo contenedor y alto, con el titulo (`name ?? symbol`) y el simbolo, y en lugar del precio `<p className="text-sm text-muted">No disponible</p>`. Sigue siendo un `Link` a la ficha (la ficha muestra su propio estado de error o "no encontrado").
+4. `QuoteCardSkeleton`: mismo contenedor, alto y padding, con 3 barras `bg-skeleton motion-safe:animate-pulse` y un `sr-only` "Cargando…". Así no hay salto de layout al llegar los datos.
+
+### `MarketToday` (Server)
+
+- `<section aria-labelledby="market-today">` con `<h2 id="market-today">Mercado hoy</h2>`.
+- Grilla: 1 columna a 375 px, 3 en `sm` (`grid gap-3 sm:grid-cols-3`).
+- `MARKET_INDEXES.map(({ symbol, name }) => <Suspense key={symbol} fallback={<QuoteCardSkeleton />}><QuoteCard symbol={symbol} name={name} /></Suspense>)`.
+
+### `ProfileIdeas` (Server, async)
+
+- `me = await getMe()`; `profile = me?.riskProfile ?? null`; `symbols = ideasFor(profile)`.
+- `<section aria-labelledby="profile-ideas">` con `<h2 id="profile-ideas">Ideas para tu perfil</h2>` y el subtitulo `text-sm text-muted`:
+  - con perfil: "Selección de ejemplo según tu perfil {RISK_PROFILES[profile].label}. No es recomendación de inversión."
+  - sin perfil: "Selección de ejemplo. No es recomendación de inversión."
+- Grilla: 1 columna a 375 px, 2 en `sm`, 4 en `lg`. Cada simbolo en su `<Suspense fallback={<QuoteCardSkeleton />}>` con `<QuoteCard symbol showCompany />`.
+
+### `ComingSoon` (Server)
+
+- `<section aria-labelledby="coming-soon">` con `<h2 id="coming-soon">Próximamente</h2>`, en tono discreto (texto chico, `text-muted`, tarjetas con borde punteado o `bg-transparent`).
+- 3 tarjetas `<div>` (nunca `Link`, `a` ni `button`), cada una con titulo, descripcion de una linea y el badge "Próximamente" (mismo estilo que el sidebar y `StockTabs`):
+
+| Titulo | Descripcion |
+|---|---|
+| Favoritos | Guarda stocks para seguirlos de cerca. |
+| Noticias | Noticias del mercado y de tus empresas. |
+| Simulador | Practica con dinero ficticio y precios reales. |
+
+### Costo en el proveedor
+
+Cada `QuoteCard` hace un `GET /stocks/:symbol` (quote + profile + metrics en el API). Son 7 tarjetas: hasta 21 llamadas a Finnhub sin cache y 7 por Home cuando los quotes (60 s) vencieron. Ver "Presupuesto de llamadas" de F06 en 02-backend. Si el proveedor llega a su limite, las tarjetas muestran "No disponible" y la Home no se rompe.
+
+### Tests (Vitest, sin red ni Supabase real)
+
+Mocks: `@/lib/api` (espiar `api.me` y `api.stock`), `@/lib/supabase/server` (`getServerAccessToken` → `"tok"`), `next/form` (como en F03). Los Server Components async se prueban como en F03: `render(await Componente(props))`. Para los que anidan componentes async (`MarketToday`, `ProfileIdeas`, `page.tsx`), se mockea `@/components/home/QuoteCard` con un fake sincrono que renderiza `<div data-testid="quote-card" data-symbol data-show-company>`. `react` `cache` se usa tal cual; cada test llama a `vi.resetModules()` o mockea `@/lib/me` para que no se arrastre el valor entre tests.
+
+| Archivo | Casos |
+|---|---|
+| `lib/home.test.ts` | `ideasFor("conservador")` → `["KO","JNJ","PG","VTI"]`; `"moderado"` → `["AAPL","MSFT","V","QQQ"]`; `"agresivo"` → `["NVDA","TSLA","AMD","META"]`; `null` → lista de moderado. `MARKET_INDEXES` son SPY/S&P 500, QQQ/Nasdaq 100 y DIA/Dow Jones, en ese orden. |
+| `lib/me.test.ts` | Llama `api.me` con `{ token: "tok" }` y devuelve el `Me`. Si `api.me` rechaza (`ApiError` o `Error`) → `null`, sin lanzar. |
+| `components/stocks/Trend.test.tsx` | `up` → svg sin `rotate-180` y "Sube" en `sr-only`; `up={false}` → `rotate-180` y "Baja". `changeTone`: `2.31` → `text-up`, `-1.05` → `text-down`, `0` y `null` → `text-muted`. |
+| `components/stocks/StockOverview.test.tsx` (sin cambios) | Debe seguir pasando igual: es la prueba de que la extraccion de `Trend` no cambio `StockHeader` (`text-up` + "Sube", `text-down` + "Baja"). |
+| `components/stocks/PopularSymbols.test.tsx` | `nav` con nombre "Populares"; 7 enlaces en orden AAPL, MSFT, NVDA, TSLA, AMZN, GOOGL, SPY, cada uno a `/stocks/{S}`. |
+| `components/home/Greeting.test.tsx` (`@/lib/me` mockeado) | `Me` moderado con `displayName: "Ana"` y `riskScore: 15` → `h1` "Hola, Ana", badge "Moderado", la descripcion de moderado, "Puntaje 15 de 24" y un enlace "Rehacer cuestionario" a `/onboarding`. `getMe` → `null` → `h1` "Hola", sin "Moderado"/"Conservador"/"Agresivo", sin "Rehacer cuestionario" y sin `role="alert"`. `riskProfile: null` → "Hola, Ana" sin badge ni puntaje. `displayName: ""` → `h1` "Hola" y, aun asi, badge "Moderado", la descripcion, "Puntaje 15 de 24" y el enlace "Rehacer cuestionario" a `/onboarding`. |
+| `components/home/QuoteCard.test.tsx` | `api.stock` llamado con `("SPY", { token: "tok" })`. Con `name="S&P 500"`: enlace a `/stocks/SPY` que contiene "S&P 500", "SPY", "$189.84" y "+2.31 (+1.23%)" con `text-up` y "Sube". Cambio negativo → `text-down` y "Baja". `change: 0` o `null` → `text-muted` sin "Sube"/"Baja". `showCompany` con `profile.logoUrl` → `img` con ese `src` y 32 px, y el titulo es `profile.name`. `showCompany` con `profile: null` → titulo = simbolo y sin `img`. `api.stock` rechaza con `ApiError` 503, con 404 `SYMBOL_NOT_FOUND` y con `Error` generico → "No disponible" con `text-muted`, sin `role="alert"`, sin lanzar. `QuoteCardSkeleton` tiene "Cargando…" para lectores. |
+| `components/home/MarketToday.test.tsx` (QuoteCard mockeado) | `h2` "Mercado hoy"; 3 tarjetas con `data-symbol` SPY, QQQ y DIA en orden y `name` S&P 500, Nasdaq 100 y Dow Jones. |
+| `components/home/ProfileIdeas.test.tsx` (QuoteCard y `@/lib/me` mockeados) | `agresivo` → tarjetas NVDA, TSLA, AMD, META con `showCompany` y el subtitulo "Selección de ejemplo según tu perfil Agresivo. No es recomendación de inversión."; `conservador` → KO, JNJ, PG, VTI; `riskProfile: null` → AAPL, MSFT, V, QQQ con "Selección de ejemplo. No es recomendación de inversión."; `getMe` → `null` → lista de moderado y el mismo subtitulo, sin `role="alert"`. |
+| `components/home/ComingSoon.test.tsx` | `h2` "Próximamente"; textos Favoritos, Noticias y Simulador con su descripcion; 3 badges "Próximamente"; `queryAllByRole("link")` y `queryAllByRole("button")` vacios. |
+| `app/(app)/page.test.tsx` (reescribir: el placeholder desaparece) | Con `Greeting`, `ProfileIdeas` y `QuoteCard` mockeados: hay un `role="search"` con `action="/search"` y un input `name="q"` vacio; el `nav` "Populares"; los `h2` "Mercado hoy" y "Próximamente". `metadata.title` es `"Home · Stock Insights"`. |
+
+### Criterios de aceptacion
+
+- [ ] `pnpm --filter web build`, `lint` y `test` pasan. El build no falla por leer cookies fuera de `<Suspense>`.
+- [ ] El HTML de `/` ya trae el buscador, Populares y Próximamente aunque el API tarde (shell estatico); cada tarjeta llega por streaming.
+- [ ] Una tarjeta que falla no afecta a las demas ni al saludo.
+- [ ] `StockHeader` se ve igual que antes en `/stocks/AAPL`.
+- [ ] Ningun `fetch` al API fuera de `lib/api.ts`; ningun `"use client"` nuevo.
+- [ ] A 375 px: sin scroll horizontal, mercado en 1 columna e ideas en 1 columna; modo claro y oscuro.
+
+### Pasos manuales pendientes
+
+Anotar en `PRUEBAS-MANUALES.md` (en local y en la app desplegada, con sesion y onboarding hecho):
+
+1. Abrir `/`: "Hola, {tu nombre}", badge con tu perfil, su descripcion, "Puntaje n de 24" y "Rehacer cuestionario" (abre `/onboarding`).
+2. Escribir "apple" en el buscador de la Home y pulsar "Buscar" → `/search?q=apple`. Cada chip de "Populares" abre su ficha.
+3. "Mercado hoy": S&P 500 (SPY), Nasdaq 100 (QQQ) y Dow Jones (DIA) con precio y cambio en verde o rojo con triangulo. Clic → abre la ficha. Al recargar, los esqueletos tienen el mismo tamaño que las tarjetas (sin saltos).
+4. "Ideas para tu perfil": 4 tarjetas con logo y nombre de empresa segun tu perfil, y el subtitulo con "No es recomendación de inversión.". Rehacer el cuestionario con otro resultado y volver: la lista cambia (conservador KO, JNJ, PG, VTI; moderado AAPL, MSFT, V, QQQ; agresivo NVDA, TSLA, AMD, META).
+5. "Próximamente": Favoritos, Noticias y Simulador sin enlaces (el cursor no cambia y Tab no las enfoca).
+6. Con el API apagado: la Home carga, el saludo dice solo "Hola", las tarjetas dicen "No disponible" y el buscador, Populares y Próximamente siguen funcionando.
+7. `/stocks/AAPL`: el triangulo y los colores del cambio se ven igual que antes de F06.
+8. A 375 px y solo con teclado: todo usable, foco visible, sin scroll horizontal; repetir en modo oscuro.
+
+---
+
+## F15 — Documentacion OpenAPI (Swagger) del API
+
+**Estatus:** in_progress
+
+F15 no cambia el web: `/docs` y `/openapi.json` viven en el API (ver 02-backend). El web sigue usando solo `lib/api.ts`.

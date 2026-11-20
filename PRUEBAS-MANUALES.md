@@ -212,3 +212,25 @@
 8. Cambia el tema del sistema a oscuro con la ficha abierta: la grafica cambia de colores sin recargar.
 9. A 375 px y solo con teclado (Tab, flechas, Enter, Escape): el buscador, `/search` y la ficha son usables, el foco es visible, las metricas van en 2 columnas y no hay scroll horizontal. Repite en modo oscuro.
 10. Con el API apagado, en la ficha → alerta "No se pudo conectar con el servidor."; en la grafica, el boton "Reintentar" vuelve a pedir el historico.
+
+## F15 — Documentacion OpenAPI (Swagger) del API
+
+1. `pnpm dev:api` y abrir `http://localhost:4000/docs`: aparece Swagger UI con los 6 endpoints agrupados en Health, Me y Stocks. En la consola no hay errores (ni de SRI ni de CORS).
+2. `http://localhost:4000/openapi.json` responde el documento sin token.
+3. En `/docs`, "Try it out" en `GET /stocks/search` con `q=apple` sin autorizar → `401 UNAUTHORIZED`.
+4. "Authorize" → pegar un `access_token` real (sin el prefijo `Bearer`) → "Try it out" en `GET /stocks/search` con `q=apple` → `200` con AAPL. Probar tambien `GET /me` y `GET /stocks/{symbol}` con `AAPL`.
+5. Repetir 1 y 4 en el API desplegado (`https://<api>.vercel.app/docs`).
+
+## F06 — Home
+
+En local y en la app desplegada, con sesion y onboarding hecho:
+
+1. Abrir `/`: "Hola, {tu nombre}", badge con tu perfil, su descripcion, "Puntaje n de 24" y "Rehacer cuestionario" (abre `/onboarding`).
+2. Escribir "apple" en el buscador de la Home y pulsar "Buscar" → `/search?q=apple`. Cada chip de "Populares" (AAPL, MSFT, NVDA, TSLA, AMZN, GOOGL, SPY) abre su ficha.
+3. "Mercado hoy": S&P 500 (SPY), Nasdaq 100 (QQQ) y Dow Jones (DIA) con precio y cambio en verde o rojo con triangulo. Clic → abre la ficha. Al recargar, los esqueletos tienen el mismo tamaño que las tarjetas (sin saltos).
+4. "Ideas para tu perfil": 4 tarjetas con logo y nombre de empresa segun tu perfil, y el subtitulo con "No es recomendación de inversión.". Rehacer el cuestionario con otro resultado y volver: la lista cambia (conservador KO, JNJ, PG, VTI; moderado AAPL, MSFT, V, QQQ; agresivo NVDA, TSLA, AMD, META).
+5. "Próximamente": Favoritos, Noticias y Simulador sin enlaces (el cursor no cambia y Tab no las enfoca).
+6. Con el API apagado: la Home carga, el saludo dice solo "Hola", las tarjetas dicen "No disponible" y el buscador, Populares y Próximamente siguen funcionando.
+7. `/stocks/AAPL`: el triangulo y los colores del cambio se ven igual que antes de F06.
+8. A 375 px y solo con teclado: todo usable, foco visible, sin scroll horizontal, mercado e ideas en 1 columna; repetir en modo oscuro.
+9. Ver codigo fuente de `/`: el HTML inicial ya trae el buscador, Populares y Próximamente aunque el API tarde.

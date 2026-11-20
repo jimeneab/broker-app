@@ -16,10 +16,11 @@ App web para ver informacion financiera de la bolsa (US), con experiencia person
 | F03 | Busqueda y detalle de stock | Dia 1 | F00, F01 | ready |
 | F04 | Favoritos | Dia 1 | F03 | pending |
 | F05 | Noticias | Dia 1 | F03 | pending |
-| F06 | Home | Dia 1 | F04, F05 | pending |
+| F06 | Home | Dia 1 | F02, F03 | ready |
 | F07 | Interacciones + carrusel personalizado | Dia 2 | F02, F06 | pending |
 | F08 | Analisis tecnico | Dia 2 | F03 | pending |
 | F09 | Simulador de trading | Dia 2 | F03 | pending |
+| F15 | Documentacion OpenAPI (Swagger) del API | Dia 2 | F03 | ready |
 | F10 | Analizador de carteras | Si sobra tiempo | F09 | pending |
 | F11 | Libertad financiera | Si sobra tiempo | F02 | pending |
 | F12 | Learning | Si sobra tiempo | F02 | pending |
@@ -167,14 +168,16 @@ App web para ver informacion financiera de la bolsa (US), con experiencia person
 ### F06 — Home
 **Objetivo:** al entrar, el usuario ve lo relevante para el.
 
-- **API:** `GET /market/overview` devuelve el quote de SPY, QQQ y DIA (proxies de los indices).
+- **Redefinida por el dueño:** ya no depende de F04 ni F05. Favoritos, noticias y el carrusel de F07 se agregan a la Home cuando existan.
+- **API:** sin endpoint nuevo (se descarta `GET /market/overview`). Cada tarjeta llama al `GET /stocks/:symbol` existente desde el servidor con el token del usuario. Costo: 7 tarjetas × (quote + profile + metrics), mitigado por la cache de Supabase.
 - **Web:** `/` con:
-  1. Saludo y perfil de riesgo.
-  2. Resumen de mercado (SPY, QQQ, DIA).
-  3. Favoritos con su precio; vacio = CTA.
-  4. Slot del carrusel personalizado (lo llena F07; mientras, se oculta).
-  5. Ultimas 5 noticias.
-- **Aceptacion:** cada bloque carga de forma independiente; si uno falla, el resto se muestra.
+  1. Saludo "Hola, {nombre}" con badge del perfil, descripcion, "Puntaje n de 24" y "Rehacer cuestionario". Si `/me` falla, solo "Hola".
+  2. Buscador grande (el `SearchForm` de `/search`) y chips "Populares": AAPL, MSFT, NVDA, TSLA, AMZN, GOOGL, SPY.
+  3. Mercado hoy: SPY (S&P 500), QQQ (Nasdaq 100), DIA (Dow Jones), cada tarjeta en su propio `Suspense`; si falla, "No disponible".
+  4. Ideas para tu perfil: 4 tarjetas de una lista fija por perfil (conservador KO, JNJ, PG, VTI; moderado AAPL, MSFT, V, QQQ; agresivo NVDA, TSLA, AMD, META; sin perfil = moderado), con la aclaracion "No es recomendación de inversión". F07 la reemplaza.
+  5. Próximamente: Favoritos, Noticias y Simulador, no clicables.
+- **Aceptacion:** cada bloque y cada tarjeta cargan de forma independiente; si uno falla, el resto se muestra.
+- **Spec:** `prompts/specs/01-product.md`, `02-backend.md` y `03-frontend.md`, seccion F06.
 
 ---
 
@@ -254,6 +257,18 @@ App web para ver informacion financiera de la bolsa (US), con experiencia person
 - **Aceptacion:**
   - Tests de cash insuficiente, venta mayor a la posicion y calculo de costo promedio y P&L.
   - El reset borra trades y restaura el cash.
+
+### F15 — Documentacion OpenAPI (Swagger) del API
+**Objetivo:** documentar y probar el API desde el navegador.
+
+- **API:**
+  - Documento OpenAPI 3.1 escrito a mano en `api/src/docs/openapi.ts` con todas las rutas actuales, sus parametros, respuestas y errores, y el esquema `bearerAuth` (JWT). `/health` sin seguridad.
+  - Rutas publicas (antes de `requireAuth`): `GET /openapi.json` (el documento) y `GET /docs` (Swagger UI desde un CDN con version fija). Sin dependencias npm nuevas.
+  - Toda feature futura que agregue un endpoint lo documenta en `openapi.ts`.
+- **Aceptacion:**
+  - `/docs` y `/openapi.json` responden sin token (supertest).
+  - Un test compara las rutas del router con los `paths` del documento (`:param` ↔ `{param}`): si no coinciden, falla.
+- **Spec:** `prompts/specs/01-product.md`, `02-backend.md` y `03-frontend.md`, seccion F15.
 
 ---
 

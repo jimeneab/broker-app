@@ -222,3 +222,83 @@ Es el corazon del reto. El usuario busca una empresa o un ETF de US por nombre o
 - [ ] La cache se usa: una segunda consulta del mismo dato dentro de su vigencia no llega al proveedor (test automatico).
 - [ ] Abrir la ficha no consume mas de 3 llamadas a Finnhub y 1 a Twelve Data cuando nada esta en cache; pasar entre 1M, 6M y 1A no hace llamadas nuevas a Twelve Data (test automatico).
 - [ ] El buscador se usa solo con teclado (flechas, Enter, Escape) y a 375 px la ficha y la busqueda no tienen scroll horizontal, en modo claro y oscuro.
+
+---
+
+## F06 — Home
+
+**Estatus:** in_progress
+
+### Proposito
+Al entrar, el usuario ve en una sola pantalla quien es para la app (su perfil de riesgo), un buscador para ir directo a una empresa, como va el mercado hoy y algunas ideas acordes a su perfil. Reemplaza el placeholder de F00. Favoritos (F04), noticias (F05) y el carrusel personalizado (F07) no son parte de F06: solo se anuncian como "Próximamente".
+
+### Historias de usuario
+- Como usuario, quiero que la Home me salude y me recuerde mi perfil de riesgo, para entender por que veo lo que veo.
+- Como usuario, quiero un buscador grande y accesos rapidos a stocks populares, para llegar a una ficha en un clic.
+- Como usuario, quiero ver como van hoy el S&P 500, el Nasdaq 100 y el Dow Jones, para tener contexto del mercado.
+- Como usuario, quiero ver algunos stocks de ejemplo acordes a mi perfil, para tener por donde empezar a explorar.
+
+### Requisitos
+1. CUANDO el usuario abre `/`, EL sistema DEBE mostrar, en este orden: saludo y perfil, buscador con "Populares", "Mercado hoy", "Ideas para tu perfil" y "Próximamente".
+2. CUANDO se conoce el perfil del usuario, EL saludo DEBE decir "Hola, {nombre}" con un badge del perfil ("Conservador", "Moderado" o "Agresivo"). Debajo, la descripcion del perfil (la misma del onboarding, F02) y "Puntaje {n} de 24", y un enlace secundario "Rehacer cuestionario" que lleva a `/onboarding`.
+3. CUANDO no se puede leer el perfil del usuario, EL saludo DEBE decir solo "Hola", sin badge, descripcion, puntaje ni mensaje de error. El resto de la pagina se sigue mostrando.
+4. EL buscador de la Home DEBE ser el mismo de la pagina "Buscar" (F03), vacio; al enviarlo se abre "Buscar" con los resultados.
+5. Debajo del buscador, EL sistema DEBE mostrar "Populares" con accesos a AAPL, MSFT, NVDA, TSLA, AMZN, GOOGL y SPY, en ese orden; cada uno abre la ficha del stock.
+6. EN "Mercado hoy", EL sistema DEBE mostrar 3 tarjetas: "S&P 500" (SPY), "Nasdaq 100" (QQQ) y "Dow Jones" (DIA). Son los ETFs que replican cada indice. Cada tarjeta muestra el nombre, el simbolo, el precio, y el cambio y el cambio % del dia en verde si sube y en rojo si baja, con signo y triangulo (el color nunca es la unica señal, igual que la ficha de F03). Cada tarjeta abre la ficha de su simbolo.
+7. EN "Ideas para tu perfil", EL sistema DEBE mostrar 4 tarjetas con el mismo formato y, ademas, el logo (si existe) y el nombre de la empresa:
+   - Conservador: KO, JNJ, PG, VTI.
+   - Moderado: AAPL, MSFT, V, QQQ.
+   - Agresivo: NVDA, TSLA, AMD, META.
+   - Sin perfil (o si no se pudo leer): la lista de Moderado.
+   Encima, el subtitulo "Selección de ejemplo según tu perfil {Perfil}. No es recomendación de inversión." Sin perfil: "Selección de ejemplo. No es recomendación de inversión."
+8. MIENTRAS una tarjeta carga, EL sistema DEBE mostrar un esqueleto del mismo tamaño, para que la pagina no salte.
+9. CUANDO los datos de una tarjeta no se pueden obtener (simbolo no encontrado, proveedor caido o en su limite, API caido), ESA tarjeta DEBE mostrar "No disponible" en gris, sin romper la grilla ni afectar a las demas tarjetas ni bloques.
+10. EN "Próximamente", EL sistema DEBE mostrar 3 tarjetas discretas y no clicables: Favoritos, Noticias y Simulador, cada una con una descripcion de una linea y la etiqueta "Próximamente". No hay enlaces rotos.
+11. CADA bloque DEBE cargar de forma independiente: lo que no depende de datos (buscador, Populares, Próximamente) se ve de inmediato, y una falla en un bloque no oculta los demas.
+
+### Fuera de alcance (F06)
+- Favoritos (F04), noticias (F05) y su bloque en la Home: se agregan a la Home cuando esas features existan.
+- Recomendaciones personalizadas (F07): la lista de ideas es fija por perfil y F07 la reemplaza.
+- Graficas en las tarjetas, actualizacion automatica de precios y el valor real de los indices (se usan los ETFs SPY, QQQ y DIA como aproximacion).
+
+### Criterios de aceptacion
+- [ ] Con sesion y onboarding hecho, `/` muestra "Hola, {nombre}", el badge del perfil, su descripcion y "Puntaje n de 24"; "Rehacer cuestionario" abre `/onboarding`.
+- [ ] Si `/me` falla, la Home muestra "Hola" sin badge y el resto de la pagina funciona (test automatico).
+- [ ] Buscar desde la Home abre `/search?q=…`; cada chip de "Populares" abre su ficha.
+- [ ] "Mercado hoy" muestra S&P 500, Nasdaq 100 y Dow Jones con precio y cambio con color y triangulo; cada tarjeta abre su ficha.
+- [ ] Las ideas cambian segun el perfil (conservador, moderado, agresivo) y sin perfil se usa la lista de moderado (test automatico).
+- [ ] Una tarjeta que falla muestra "No disponible" y las demas se ven normal (test automatico).
+- [ ] Las tarjetas de "Próximamente" no son enlaces (test automatico).
+- [ ] A 375 px no hay scroll horizontal, en modo claro y oscuro; todo se usa con teclado.
+
+---
+
+## F15 — Documentacion OpenAPI (Swagger) del API
+
+**Estatus:** in_progress
+
+### Proposito
+Que cualquier desarrollador (o el evaluador del reto) pueda ver y probar el API desde el navegador sin leer el codigo: una pagina de Swagger UI con todos los endpoints, sus parametros, respuestas y errores, y el boton "Authorize" para usar un JWT real.
+
+### Historias de usuario
+- Como desarrollador, quiero abrir `/docs` en el API y ver todos los endpoints documentados, para saber como usarlos.
+- Como desarrollador, quiero pegar mi JWT en "Authorize" y probar un endpoint desde la misma pagina, sin Postman.
+- Como desarrollador, quiero descargar el documento OpenAPI (`/openapi.json`), para generar clientes o importarlo en otras herramientas.
+
+### Requisitos
+1. CUANDO alguien abre `GET /docs` en el API, EL sistema DEBE mostrar Swagger UI con el documento del API, sin pedir token.
+2. CUANDO alguien pide `GET /openapi.json`, EL sistema DEBE responder el documento OpenAPI 3.1, sin pedir token.
+3. EL documento DEBE incluir todos los endpoints del API con sus parametros, cuerpos, respuestas y errores (`{ error: { code, message } }`).
+4. EL documento DEBE declarar la autenticacion con JWT (Bearer). `/health` es el unico endpoint publico de datos.
+5. CUANDO se agrega un endpoint nuevo al API, ESE endpoint DEBE agregarse al documento; un test automatico falla si el documento y las rutas no coinciden.
+
+### Fuera de alcance (F15)
+- Generar el documento a partir de los esquemas Zod o de anotaciones (se escribe a mano).
+- Documentar el web (Next.js) o el futuro `/mcp`.
+- Versionado del API.
+
+### Criterios de aceptacion
+- [ ] `http://localhost:4000/docs` muestra Swagger UI con los 6 endpoints actuales.
+- [ ] Con "Authorize" y un JWT real, "Try it out" en `GET /stocks/search` responde 200.
+- [ ] `/docs` y `/openapi.json` responden sin token (test automatico).
+- [ ] Una ruta nueva sin documentar hace fallar los tests.
